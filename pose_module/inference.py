@@ -2,10 +2,10 @@
 Modal wrapper for SAM 3D Body 2D pose inference.
 """
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
-from sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body
-from sam_3d_body.metadata.mhr70 import mhr_names
-from tools.build_detector import HumanDetector
+from typing import Any, Dict, Optional
+from sam3d.sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body
+from sam3d.sam_3d_body.metadata.mhr70 import mhr_names
+from sam3d.tools.build_detector import HumanDetector
 import numpy as np
 
 
@@ -25,7 +25,8 @@ class SAM3DBodyInference:
         use_bbox_detector: bool = True,
     ) -> Optional[Dict[str, Any]]:
         """
-        Predict 2D pose keypoints for a single person from an image.
+        Predict 3D pose keypoints, root translation, root rotation, and 3D
+        euler angle joint angles from an imahe
 
         Args:
             image: Input image as numpy array in RGB format (H, W, 3)
@@ -82,7 +83,10 @@ class SAM3DBodyInference:
         root_translation = (mhr_parameters[0], mhr_parameters[1], mhr_parameters[2])
         root_rotation = (mhr_parameters[3], mhr_parameters[4], mhr_parameters[5])
         joint_angles_dict = {
-            joint_name: (mhr_parameters[6 + i * 3 + 0], mhr_parameters[6 + i * 3 + 1], mhr_parameters[6 + i * 3 + 2]) for i, joint_name in enumerate(self.joint_names)
+            joint_name: (mhr_parameters[6 + i * 3 + 0],
+                         mhr_parameters[6 + i * 3 + 1],
+                         mhr_parameters[6 + i * 3 + 2],)
+            for i, joint_name in enumerate(self.joint_names)
         }
 
         return {
