@@ -19,7 +19,7 @@ class SAM3DBodyInference:
         self.human_detector = HumanDetector(name="vitdet", device="cuda")
         print("SAM 3D Body model loaded successfully!")
 
-    def predict_2d_pose(
+    def predict(
         self,
         image: np.ndarray,
         use_bbox_detector: bool = True,
