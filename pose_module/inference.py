@@ -66,9 +66,11 @@ class SAM3DBodyInference:
         # Get first person's output
         person_output = outputs[0]
 
-        # Extract 3d keypoints
+        # Extract 3d and 2d keypoints
         keypoints_3d = person_output["pred_keypoints_3d"]  # Shape: [70, 2]
         assert len(self.joint_names == keypoints_3d.shape[0])
+        keypoints_2d = person_output["pred_keypoints_2d"]
+        assert len(self.joint_names == keypoints_2d.shape[0])
 
         # Map keypoints to joint names
         keypoints_3d_dict = {}
@@ -77,6 +79,13 @@ class SAM3DBodyInference:
             y = keypoints_3d[idx][1]
             z = keypoints_3d[idx][2]
             keypoints_3d_dict[joint_name] = (x, y, z)
+
+        # Map keypoints to joint names
+        keypoints_2d_dict = {}
+        for idx, joint_name in enumerate(self.joint_names):
+            x = keypoints_2d[idx][0]
+            y = keypoints_2d[idx][1]
+            keypoints_2d_dict[joint_name] = (x, y)
 
         # Extract MHR parameters
         mhr_parameters = person_output["mhr_model_params"]
@@ -90,10 +99,11 @@ class SAM3DBodyInference:
         }
 
         return {
-            'keypoints': keypoints_3d_dict,
+            'keypoints_3d': keypoints_3d_dict,
+            'keypoints_2d': keypoints_2d,
             'root_translation': root_translation,
             'root_rotation': root_rotation,
-            'joint_angles_dict': joint_angles_dict
+            'joint_angles': joint_angles_dict
         }
 
 
