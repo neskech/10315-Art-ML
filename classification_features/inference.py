@@ -62,7 +62,7 @@ def _load_model():
     return model, config
 
 
-class PoseEmbedding:
+class PoseClassificationFeatures:
     def __init__(self) -> None:
         """Initialize the PoseC3D model."""
         print("Loading PoseC3D model...")
@@ -156,7 +156,7 @@ class PoseEmbedding:
             # Extract backbone features
             features, _ = self.model.extract_feat(inputs,
                                                   stage='backbone',
-                                                  test_mode=True) # type: ignore
+                                                  test_mode=True)  # type: ignore
 
             # Average pool spatial and temporal dimensions
             # features shape: [batch_size, channels, temporal, spatial_h, spatial_w]

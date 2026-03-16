@@ -18,7 +18,7 @@ def _predict_poses(poses_path: str, existingDataframe: pd.DataFrame) -> pd.DataF
 
             path = os.path.join(root, file)
             relative_path = path.removeprefix(poses_path)
-            if existingDataframe['image_path'].isin([relative_path]).any():
+            if not existingDataframe.empty and relative_path in existingDataframe['image_path'].values:
                 print(f"{relative_path} has already been processed!")
                 continue
 
