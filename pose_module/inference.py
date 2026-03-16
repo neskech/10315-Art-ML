@@ -109,7 +109,7 @@ class SAM3DBodyInference:
 
 def _load_model():
     parent = Path(__file__).resolve().parent.parent
-    CHECKPOINT_PATH = str(parent / 'checkpoints' / 'sam-3d-body-dinov3' /
+    CHECKPOINT_PATH = str(parent / 'checkpoints' / 'sam3d' / 'sam-3d-body-dinov3' /
                           'model.ckpt')
     MHR_PATH = str(parent / 'checkpoints' / 'sam-3d-body-dinov3' / 'assets' /
                    'mhr_model.pt')
