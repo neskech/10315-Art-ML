@@ -42,12 +42,15 @@ class FeedForwardVAE(nn.Module):
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         latent = self.encoder.forward(x)
+        latent = latent / (torch.norm(latent, dim=-1) + 1e-6)
         return latent
 
     def decode(self, latent: torch.Tensor) -> torch.Tensor:
         return self.decoder.forward(latent)
 
-    def encode_and_reconstruct(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def encode_and_reconstruct(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         latent = self.encode(x)
         reconstruction = self.decode(latent)
         return latent, reconstruction
