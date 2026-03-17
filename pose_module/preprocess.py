@@ -34,16 +34,24 @@ def prepare_batch_correctly(
 
     bounding_boxes = []
     for i, image in enumerate(images):
+        height, width = image.shape[:2]
+
         if human_detector is not None:
-            box = human_detector.run_human_detection(image)
+            detected_boxes = human_detector.run_human_detection(image)
+            if detected_boxes is not None and len(detected_boxes) > 0:
+                box = np.array(detected_boxes[0], dtype=np.float32).flatten()
+            else:
+                box = np.array([0, 0, width, height], dtype=np.float32)
             bounding_boxes.append(box)
+            
         elif boxes is not None:
-            bounding_boxes.append(boxes[i])
-        else:
-            width, height = image.shape[:2]
-            box = np.array([0, 0, width, height])
+            box = np.array(boxes[i], dtype=np.float32).flatten()
             bounding_boxes.append(box)
-    # (B, 4)
+            
+        else:
+            box = np.array([0, 0, width, height], dtype=np.float32)
+            bounding_boxes.append(box)
+
     bounding_boxes = np.stack(bounding_boxes, axis=0)
 
     # Make a list of dictionaries
@@ -60,7 +68,7 @@ def prepare_batch_correctly(
         # Masks must be on same device as images (GPU) for the transform
         # at the end of the loop (TopdownAffineGPU)
         if masks is None:
-            width, height = images[batch_idx].shape[:2]
+            height, width = images[batch_idx].shape[:2]
             batch_element["mask"] = np.zeros(
                 (height, width, 1),
                 dtype=np.uint8,
@@ -113,15 +121,17 @@ def prepare_batch_correctly(
 
     # Default camera instrinsics
     if cam_int is None:
-        batch["cam_int"] = torch.tensor(
-            [
+        cam_ints = []
+        for image in images:
+            h, w = image.shape[:2]
+            cam_ints.append(
                 [
-                    [(height**2 + width**2) ** 0.5, 0, width / 2.0],
-                    [0, (height**2 + width**2) ** 0.5, height / 2.0],
+                    [(h**2 + w**2) ** 0.5, 0, w / 2.0],
+                    [0, (h**2 + w**2) ** 0.5, h / 2.0],
                     [0, 0, 1],
                 ]
-            ],
-        ).repeat(batch_size, 1, 1)
+            )
+        batch["cam_int"] = torch.tensor(cam_ints, dtype=torch.float32)
     else:
         batch["cam_int"] = cam_int
 

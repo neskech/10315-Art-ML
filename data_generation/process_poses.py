@@ -5,6 +5,7 @@ import pandas as pd
 from pathlib import Path
 import torch
 import tqdm
+from pose_module.basicInference import SAM3DBodyInferenceBasic
 from pose_module.inference import SAM3DBodyInference
 
 CURRENT_DIR = Path(__file__).parent.resolve()
@@ -18,7 +19,7 @@ def _predict_poses(
     processing_limit: int,
 ) -> pd.DataFrame:
     data = []
-    estimator = SAM3DBodyInference(device=torch.device('cuda'), use_torch_compile=False)
+    estimator = SAM3DBodyInference (device=torch.device('cuda'), use_torch_compile=False)
 
     image_paths = []
     for root, _, files in os.walk(poses_path):
@@ -35,7 +36,7 @@ def _predict_poses(
             ):
                 print(f"{relative_path} has already been processed!")
                 continue
-
+            
             image_paths.append(os.path.join(root, file))
 
     if processing_limit != -1:

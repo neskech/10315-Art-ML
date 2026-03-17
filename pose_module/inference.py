@@ -46,7 +46,7 @@ class SAM3DBodyInference:
             self.model = torch.compile(self.model, "max-autotune")
 
         # Sam3 is better but bigger and slower, so we opt not to use it
-        self.human_detector = HumanDetector(name="vitdet", device=self.device)
+        self.human_detector = None # HumanDetector(name="vitdet", device=self.device)
 
         # Transform applied to each batch element
         self.target_image_size = self.model_cfg.MODEL.IMAGE_SIZE

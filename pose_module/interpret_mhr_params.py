@@ -1,3 +1,4 @@
+import ast
 import torch
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,6 +7,7 @@ from typing import Any
 
 @dataclass
 class PoseData:
+    relative_image_path: str
     pred_cam: torch.Tensor
     pred_cam_t: torch.Tensor
     focal_length: torch.Tensor
@@ -46,10 +48,15 @@ class PoseDataInterpreter:
         Takes a perfectly formatted pose dictionary (all values are lists),
         runs the MHR model, and returns a PoseData dataclass.
         """
+
+        def parse(val):
+            if isinstance(val, str):
+                return ast.literal_eval(val)
+            return val
+
         # 1. Straight to tensors
-        mhr_params = torch.tensor(pose_dict["mhr_parameters"], dtype=torch.float32).to(
-            self.device
-        )
+        raw_mhr = parse(pose_dict["mhr_parameters"])
+        mhr_params = torch.tensor(raw_mhr, dtype=torch.float32).to(self.device)
 
         root_translation = mhr_params[0:3]
         root_rotation = mhr_params[3:6]
@@ -61,25 +68,32 @@ class PoseDataInterpreter:
         expr_coeffs = torch.zeros(1, 72, device=self.device)
 
         vertices, skeleton_state = self.mhr_model(id_coeffs, pose_params, expr_coeffs)
+        vertices = vertices / 100
+        vertices[..., [1, 2]] *= -1
 
         vertices = vertices.squeeze(0).cpu()
         skeleton_state = skeleton_state.squeeze(0).cpu()
-        pred_keypoints_3d = skeleton_state[..., :3]
+        pred_keypoints_3d = skeleton_state[..., :3] / 100
+        pred_keypoints_3d[..., [1, 2]] *= -1
 
+        kp_dict = parse(pose_dict["pred_keypoints_2d"])
+        pred_keypoints_2d = torch.tensor(list(kp_dict.values()), dtype=torch.float32)
+   
         # 3. Build and return
         return PoseData(
-            pred_cam=torch.tensor(pose_dict["pred_cam"], dtype=torch.float32),
+            relative_image_path=pose_dict["image_path"],
+            pred_cam=torch.tensor(parse(pose_dict["pred_cam"]), dtype=torch.float32),
             pred_cam_t=torch.tensor(
-                pose_dict["pred_cam_translation"], dtype=torch.float32
+                parse(pose_dict["pred_cam_t"]), dtype=torch.float32
             ),
-            focal_length=torch.tensor(pose_dict["focal_length"], dtype=torch.float32),
+            focal_length=torch.tensor(
+                parse(pose_dict["focal_length"]), dtype=torch.float32
+            ),
             mhr_parameters=mhr_params.cpu(),
             root_translation=root_translation.cpu(),
             root_rotation=root_rotation.cpu(),
             joint_angles=joint_angles.cpu(),
             pred_vertices=vertices,
-            pred_keypoints_2d=torch.tensor(
-                pose_dict["keypoints_2d"], dtype=torch.float32
-            ),
+            pred_keypoints_2d=pred_keypoints_2d,
             pred_keypoints_3d=pred_keypoints_3d,
         )
