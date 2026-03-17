@@ -17,6 +17,7 @@ class PoseData:
     joint_angles: torch.Tensor
     pred_vertices: torch.Tensor
     pred_keypoints_2d: torch.Tensor
+    pred_keypoints_2d_dict: dict
     pred_keypoints_3d: torch.Tensor
 
 
@@ -78,7 +79,7 @@ class PoseDataInterpreter:
 
         kp_dict = parse(pose_dict["pred_keypoints_2d"])
         pred_keypoints_2d = torch.tensor(list(kp_dict.values()), dtype=torch.float32)
-   
+
         # 3. Build and return
         return PoseData(
             relative_image_path=pose_dict["image_path"],
@@ -95,5 +96,6 @@ class PoseDataInterpreter:
             joint_angles=joint_angles.cpu(),
             pred_vertices=vertices,
             pred_keypoints_2d=pred_keypoints_2d,
+            pred_keypoints_2d_dict=kp_dict,
             pred_keypoints_3d=pred_keypoints_3d,
         )
