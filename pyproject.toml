@@ -47,6 +47,7 @@ dependencies = [
     "gdown>=5.2.1",
     "detectron2",
     "setuptools<70.0.0",
+    "pyarrow>=23.0.1",
 ]
 
 [tool.uv.sources]

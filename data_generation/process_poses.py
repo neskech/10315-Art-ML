@@ -5,7 +5,6 @@ import pandas as pd
 from pathlib import Path
 import torch
 import tqdm
-from pose_module.basicInference import SAM3DBodyInferenceBasic
 from pose_module.inference import SAM3DBodyInference
 
 CURRENT_DIR = Path(__file__).parent.resolve()
@@ -17,9 +16,10 @@ def _predict_poses(
     existingDataframe: pd.DataFrame,
     batch_size: int,
     processing_limit: int,
+    overwrite: bool,
 ) -> pd.DataFrame:
     data = []
-    estimator = SAM3DBodyInference (device=torch.device('cuda'), use_torch_compile=False)
+    estimator = SAM3DBodyInference(device=torch.device('cuda'), use_torch_compile=False)
 
     image_paths = []
     for root, _, files in os.walk(poses_path):
@@ -31,7 +31,8 @@ def _predict_poses(
                 continue
 
             if (
-                not existingDataframe.empty
+                not overwrite
+                and not existingDataframe.empty
                 and relative_path in existingDataframe["image_path"].values
             ):
                 print(f"{relative_path} has already been processed!")
@@ -53,7 +54,7 @@ def _predict_poses(
 
         cv2_images = [cv2.imread(path) for path in batch]
         filtered_cv2_images = [img for img in cv2_images if img is not None]
-        outputs = estimator.predict(filtered_cv2_images, use_bbox_detector=True)
+        outputs = estimator.predict(filtered_cv2_images, use_bbox_detector=False)
 
         for output, path in zip(outputs, batch):
             relative_path = path.removeprefix(poses_path)
@@ -68,20 +69,25 @@ def _write_poses(
     data_path: str,
     batch_size: int,
     processing_limit: int,
+    overwrite: bool,
 ):
-    processed_data_path = os.path.join(data_path, "processed_poses.csv")
-    if os.path.exists(processed_data_path):
-        existingDataframe = pd.read_csv(processed_data_path)
+    processed_data_path = os.path.join(data_path, "processed_poses.parquet")
+    if not overwrite and os.path.exists(processed_data_path):
+        existingDataframe = pd.read_parquet(processed_data_path)
     else:
         existingDataframe = pd.DataFrame([])
 
     poses_path = os.path.join(data_path, "poses/")
     new_dataframe = _predict_poses(
-        poses_path, existingDataframe, batch_size, processing_limit
+        poses_path, existingDataframe, batch_size, processing_limit, overwrite
     )
-    combined_dataframe = pd.concat([existingDataframe, new_dataframe])
+    
+    if overwrite:
+        combined_dataframe = new_dataframe
+    else:
+        combined_dataframe = pd.concat([existingDataframe, new_dataframe])
 
-    combined_dataframe.to_csv(processed_data_path)
+    combined_dataframe.to_parquet(processed_data_path, compression='zstd')
 
 
 def main():
@@ -100,11 +106,16 @@ def main():
         default=-1,
         help="Maximum number of new images to process. Set to -1 for no limit (default: -1).",
     )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing processed data instead of appending.",
+    )
 
     args = parser.parse_args()
 
     print("Starting to read and process poses with sam 3d body...")
-    _write_poses(DATA_PATH, args.batch_size, args.image_limit)
+    _write_poses(DATA_PATH, args.batch_size, args.image_limit, args.overwrite)
     print("Successfully read and processed poses with sam 3d body...")
 
 

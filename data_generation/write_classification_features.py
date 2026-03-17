@@ -39,21 +39,21 @@ def _get_features_dataframe(
 
 def _write_poses(data_path: str):
     classification_features_path = os.path.join(
-        data_path, "classification_features.csv"
+        data_path, "classification_features.parquet"
     )
     if os.path.exists(classification_features_path):
-        existingDataframe = pd.read_csv(classification_features_path)
+        existingDataframe = pd.read_parquet(classification_features_path)
     else:
         existingDataframe = pd.DataFrame([])
 
     classification_features_path = os.path.join(data_path, "")
 
-    poses_path = os.path.join(data_path, "processed_poses.csv")
-    poses_dataframe = pd.read_csv(poses_path)
+    poses_path = os.path.join(data_path, "processed_poses.parquet")
+    poses_dataframe = pd.read_parquet(poses_path)
 
     new_dataframe = _get_features_dataframe(poses_dataframe, existingDataframe)
     combined_dataframe = pd.concat([existingDataframe, new_dataframe])
-    combined_dataframe.to_csv(classification_features_path)
+    combined_dataframe.to_parquet(classification_features_path, compression="zstd")
 
 
 def main():

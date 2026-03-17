@@ -23,7 +23,7 @@ from pose_module.sam3d.tools.vis_utils import visualize_sample_together  # noqa:
 
 CURRENT_DIRECTORY = Path(__file__).parent
 POSES_DIRECTORY = CURRENT_DIRECTORY.parent / "data" / "poses"
-CSV_PATH = CURRENT_DIRECTORY.parent / "data" / "processed_poses.csv"
+PARQUET_PATH = CURRENT_DIRECTORY.parent / "data" / "processed_poses.parquet"
 
 
 def visualize_sample(poseData: PoseData):
@@ -47,7 +47,7 @@ def visualize_sample(poseData: PoseData):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Visualize a 3D pose from a processed CSV."
+        description="Visualize a 3D pose from a processed parquet."
     )
     parser.add_argument(
         "-i",
@@ -60,11 +60,11 @@ def main():
 
     target_path = args.image_path
 
-    df = pd.read_csv(CSV_PATH)
+    df = pd.read_parquet(PARQUET_PATH)
     matched_rows = df[df["image_path"] == target_path]
 
     if matched_rows.empty:
-        print(f"Error: No data found for image path '{target_path}' in the CSV.")
+        print(f"Error: No data found for image path '{target_path}' in the parquet.")
         return
 
     row_dict = matched_rows.iloc[0].to_dict()

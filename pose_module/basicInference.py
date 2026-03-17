@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+from pose_module.sam3d.tools.build_detector import HumanDetector
+
 current_dir = Path(__file__).resolve().parent
 sam3d_repo_path = current_dir / "sam3d"
 
@@ -12,16 +14,24 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 from pose_module.sam3d.sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body  # noqa: E402
 from pose_module.sam3d.sam_3d_body.metadata.mhr70 import mhr_names  # noqa: E402
-from pose_module.sam3d.tools.build_detector import HumanDetector  # noqa: E402
 
 
 class SAM3DBodyInferenceBasic:
-    def __init__(self, device: str = "cuda", use_torch_compile: bool = False) -> None:
+    def __init__(
+        self,
+        device: torch.device,
+        use_human_detector: bool,
+        use_torch_compile: bool = False,
+    ) -> None:
         self.device = torch.device(device)
         self.model, self.model_cfg = _load_model()
         self.model = self.model.to(self.device).eval()
         self.joint_names = mhr_names
-        self.human_detector = None #HumanDetector(name="vitdet", device=self.device)
+        self.human_detector = (
+            HumanDetector(name="vitdet", device=self.device)
+            if use_human_detector
+            else None
+        )
 
         self.estimator = SAM3DBodyEstimator(
             sam_3d_body_model=self.model,

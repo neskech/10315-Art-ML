@@ -5,6 +5,8 @@ Modal wrapper for SAM 3D Body 2D pose inference.
 from pathlib import Path
 import sys
 
+from pose_module.sam3d.tools.build_detector import HumanDetector
+
 
 # Allow imports from the sam3d repo to work
 current_dir = Path(__file__).resolve().parent
@@ -26,7 +28,6 @@ from pose_module.sam3d.sam_3d_body.data.transforms.common import (  # noqa: E402
 from pose_module.sam3d.sam_3d_body.utils.dist import recursive_to  # noqa: E402
 from pose_module.sam3d.sam_3d_body import load_sam_3d_body  # noqa: E402
 from pose_module.sam3d.sam_3d_body.metadata.mhr70 import mhr_names  # noqa: E402
-from pose_module.sam3d.tools.build_detector import HumanDetector  # noqa: E402
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 from torchvision.transforms import ToTensor  # noqa: E402
@@ -46,7 +47,7 @@ class SAM3DBodyInference:
             self.model = torch.compile(self.model, "max-autotune")
 
         # Sam3 is better but bigger and slower, so we opt not to use it
-        self.human_detector = None # HumanDetector(name="vitdet", device=self.device)
+        self.human_detector = HumanDetector(name="vitdet", device=self.device)
 
         # Transform applied to each batch element
         self.target_image_size = self.model_cfg.MODEL.IMAGE_SIZE
@@ -77,7 +78,7 @@ class SAM3DBodyInference:
     def predict(
         self,
         images: list[np.ndarray],
-        use_bbox_detector: bool = True,
+        use_bbox_detector: bool
     ) -> Optional[Dict[str, Any]]:
         """
         Predict 3D pose keypoints, root translation, root rotation, and 3D
