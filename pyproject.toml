@@ -45,7 +45,13 @@ dependencies = [
     "yacs>=0.1.8",
     "power-spherical",
     "gdown>=5.2.1",
+    "detectron2",
+    "setuptools<70.0.0",
 ]
 
 [tool.uv.sources]
 power-spherical = { git = "https://github.com/nicola-decao/power_spherical.git" }
+detectron2 = { git = "https://github.com/facebookresearch/detectron2.git", rev = "a1ce2f9" }
+
+[tool.uv]
+no-build-isolation-package = ["detectron2"]

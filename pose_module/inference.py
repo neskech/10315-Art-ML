@@ -15,27 +15,28 @@ if str(sam3d_repo_path) not in sys.path:
 
 
 from typing import Any, Dict, Optional  # noqa: E402
-from pose_module.inferFull import infer_full # noqa: E402
-from pose_module.preprocess import prepare_batch_correctly # noqa: E402
-from pose_module.sam3d.sam_3d_body.data.transforms.common import ( # noqa: E402
+from pose_module.inferFull import infer_full  # noqa: E402
+from pose_module.preprocess import prepare_batch_correctly  # noqa: E402
+from pose_module.sam3d.sam_3d_body.data.transforms.common import (  # noqa: E402
     Compose,
     GetBBoxCenterScale,
     TopdownAffine,
     VisionTransformWrapper,
-) 
-from pose_module.sam3d.sam_3d_body.utils.dist import recursive_to # noqa: E402
-from pose_module.sam3d.sam_3d_body import load_sam_3d_body # noqa: E402
-from pose_module.sam3d.sam_3d_body.metadata.mhr70 import mhr_names # noqa: E402
-from pose_module.sam3d.tools.build_detector import HumanDetector # noqa: E402
-import numpy as np # noqa: E402
-import torch # noqa: E402
-from torchvision.transforms import ToTensor # noqa: E402
+)
+from pose_module.sam3d.sam_3d_body.utils.dist import recursive_to  # noqa: E402
+from pose_module.sam3d.sam_3d_body import load_sam_3d_body  # noqa: E402
+from pose_module.sam3d.sam_3d_body.metadata.mhr70 import mhr_names  # noqa: E402
+from pose_module.sam3d.tools.build_detector import HumanDetector  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+from torchvision.transforms import ToTensor  # noqa: E402
 
 
 class SAM3DBodyInference:
     def __init__(self, device: torch.device, use_torch_compile: bool) -> None:
         self.device = device
         self.model, self.model_cfg = _load_model()
+        self.model = self.model.eval()
 
         # Store joint names for keypoint mapping
         self.joint_names = mhr_names
@@ -72,6 +73,7 @@ class SAM3DBodyInference:
             ]
         )
 
+    @torch.no_grad
     def predict(
         self,
         images: list[np.ndarray],
@@ -111,63 +113,47 @@ class SAM3DBodyInference:
         outputs = infer_full(
             self.model, image_batch, input_batch, self.transform_hand, self.device
         )
+        outputs = outputs["mhr"]
 
         output_dictionaries = []
         for i in range(batch_size):
-            print("FUCKING SHAPE", outputs["pred_keypoints_3d"].shape)
-            # Extract 3d and 2d keypoints
-            keypoints_3d = outputs["pred_keypoints_3d"][i]  # Shape: [70, 2]
-            assert len(self.joint_names == keypoints_3d.shape[0])
-            keypoints_2d = outputs["pred_keypoints_2d"][i]
-            assert len(self.joint_names == keypoints_2d.shape[0])
+            # Extract MHR parameters
+            # See sam3d/sam_3d_body/models/heads/mhr_head.py
+            # The first 3 params are root translation, then root rotation
+            # then 130 euler angles. The rest are for bone length and body shape
+            mhr_parameters = outputs["mhr_model_params"][i].tolist()
 
-            # Map keypoints to joint names
-            keypoints_3d_dict = {}
-            for idx, joint_name in enumerate(self.joint_names):
-                x = keypoints_3d[idx][0]
-                y = keypoints_3d[idx][1]
-                z = keypoints_3d[idx][2]
-                keypoints_3d_dict[joint_name] = (x, y, z)
+            # Extract camera parameters
+            pred_cam = outputs["pred_cam"][i].tolist()
+            pred_cam_t = outputs["pred_cam_t"][i].tolist()
+            focal_length = outputs["focal_length"][i].tolist()
 
-            # Map keypoints to joint names
+            # Extract 2D keypoints
+            keypoints = outputs["pred_keypoints_2d"][i].tolist()
             keypoints_2d_dict = {}
             for idx, joint_name in enumerate(self.joint_names):
-                x = keypoints_2d[idx][0]
-                y = keypoints_2d[idx][1]
+                x = keypoints[idx][0]
+                y = keypoints[idx][1]
                 keypoints_2d_dict[joint_name] = (x, y)
 
-            # Extract MHR parameters
-            mhr_parameters = outputs["mhr_model_params"][i]
-            root_translation = (mhr_parameters[0], mhr_parameters[1], mhr_parameters[2])
-            root_rotation = (mhr_parameters[3], mhr_parameters[4], mhr_parameters[5])
-            joint_angles_dict = {
-                joint_name: (
-                    mhr_parameters[6 + i * 3 + 0],
-                    mhr_parameters[6 + i * 3 + 1],
-                    mhr_parameters[6 + i * 3 + 2],
-                )
-                for i, joint_name in enumerate(self.joint_names)
-            }
+          
 
             output_dictionaries.append(
                 {
-                    "keypoints_3d": keypoints_3d_dict,
-                    "keypoints_2d": keypoints_2d,
-                    "root_translation": root_translation,
-                    "root_rotation": root_rotation,
-                    "joint_angles": joint_angles_dict,
+                    "mhr_parameters": mhr_parameters,
+                    "pred_cam": pred_cam,
+                    "pred_cam_t": pred_cam_t,
+                    "focal_length": focal_length,
+                    "pred_keypoints_2d": keypoints_2d_dict
                 }
             )
-
         return output_dictionaries
 
 
 def _load_model():
     parent = Path(__file__).resolve().parent.parent
-    CHECKPOINT_PATH = str(
-        parent / "checkpoints" / "sam3d" / "sam-3d-body-dinov3" / "model.ckpt"
-    )
+    CHECKPOINT_PATH = str(parent / "checkpoints" / "sam3d" / "dinov3" / "model.ckpt")
     MHR_PATH = str(
-        parent / "checkpoints" / "sam-3d-body-dinov3" / "assets" / "mhr_model.pt"
+        parent / "checkpoints" / "sam3d" / "dinov3" / "assets" / "mhr_model.pt"
     )
     return load_sam_3d_body(checkpoint_path=CHECKPOINT_PATH, mhr_path=MHR_PATH)

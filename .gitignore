@@ -1,2 +1,4 @@
 .venv/
 data/
+checkpoints/sam3d/dinov3/model.ckpt
+checkpoints/sam3d/dinov3/assets/mhr_model.pt

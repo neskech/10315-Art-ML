@@ -213,6 +213,7 @@ class MHRHead(nn.Module):
         full_pose_params = torch.cat(
             [global_trans * 10, global_rot, body_pose_params], dim=1
         )  # B x 127
+
         ## Put in hands
         if hand_pose_params is not None:
             full_pose_params = self.replace_hands_in_pose(
