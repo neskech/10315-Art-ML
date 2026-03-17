@@ -5,7 +5,7 @@ from pathlib import Path
 
 from topKRetrieval.topKRetrieval import runTopKRetrieval
 from topKRetrieval.squaredDistanceRetrieval import squaredDistanceMetric
-from topKRetrieval.classificationFeatureRetrieval import classificationFeatureMetric
+from topKRetrieval.classificationFeatureRetrieval import getClassificationFeatureMetric
 
 CURRENT_DIRECTORY = Path(__file__).parent.resolve()
 POSES_DIRECTORY = CURRENT_DIRECTORY.parent / "data" / "poses"
@@ -66,7 +66,7 @@ def main():
 
     metric_map = {
         "squared": squaredDistanceMetric,
-        "classification": classificationFeatureMetric,
+        "classification": getClassificationFeatureMetric(),
     }
     selected_metric = metric_map[args.metric]
     query_pose, results = runTopKRetrieval(

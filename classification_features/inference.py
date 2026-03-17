@@ -2,17 +2,23 @@
 Modal wrapper for PoseC3D 2D pose embedding extraction.
 """
 from pathlib import Path
+import sys
 from typing import Dict, Tuple
 
+current_dir = Path(__file__).resolve().parent
 
-import numpy as np
-import torch
+if str(current_dir) not in sys.path:
+    sys.path.insert(0, str(current_dir))
+    sys.path.insert(0, str(current_dir.parent / 'pose_module' / 'sam3d'))
 
-import mmengine
-from mmengine.dataset import Compose, pseudo_collate
-from mmengine.registry import init_default_scope
-from mmaction.apis import init_recognizer
-from ..pose_module.sam3d.sam_3d_body.metadata.mhr70 import mhr_names
+import numpy as np # noqa: E402
+import torch  # noqa: E402
+
+import mmengine # noqa: E402
+from mmengine.dataset import Compose, pseudo_collate # noqa: E402
+from mmengine.registry import init_default_scope # noqa: E402
+from mmaction.apis import init_recognizer # noqa: E402 
+from pose_module.sam3d.sam_3d_body.metadata.mhr70 import mhr_names # noqa: E402
 
 
 # MHR70 format provided:

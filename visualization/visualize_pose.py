@@ -8,6 +8,7 @@ import sys
 import cv2
 import numpy as np
 import pandas as pd
+import torch
 
 
 # Allow imports from the sam3d repo to work
@@ -18,6 +19,7 @@ if str(sam3d_repo_path) not in sys.path:
     sys.path.insert(0, str(sam3d_repo_path))
 
 
+from pose_module.inference import SAM3DBodyInference
 from pose_module.interpret_mhr_params import PoseData, PoseDataInterpreter  # noqa: E402
 from pose_module.sam3d.tools.vis_utils import visualize_sample_together  # noqa: E402
 
@@ -58,20 +60,15 @@ def main():
     )
     args = parser.parse_args()
 
-    target_path = args.image_path
+    estimator = SAM3DBodyInference(torch.device("cuda"), use_torch_compile=False)
+    image = cv2.imread(args.image_path)
+    outputs = estimator.predict([image], use_bbox_detector=False)
 
-    df = pd.read_parquet(PARQUET_PATH)
-    matched_rows = df[df["image_path"] == target_path]
-
-    if matched_rows.empty:
-        print(f"Error: No data found for image path '{target_path}' in the parquet.")
-        return
-
-    row_dict = matched_rows.iloc[0].to_dict()
-    interpreter = PoseDataInterpreter()
-    pose_data = interpreter.interpret_pose_dictionary(row_dict)
-
-    visualize_sample(pose_data)
+    intepreter = PoseDataInterpreter()
+    output = outputs[0]
+    output["image_path"] = args.image_path
+    poseData = intepreter.interpret_pose_dictionary(output)
+    visualize_sample(poseData)
 
 
 if __name__ == "__main__":

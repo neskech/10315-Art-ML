@@ -224,7 +224,6 @@ dependencies = [
     { name = "black" },
     { name = "chump" },
     { name = "cython" },
-    { name = "detectron2" },
     { name = "dill" },
     { name = "einops" },
     { name = "ffmpeg" },
@@ -237,6 +236,7 @@ dependencies = [
     { name = "joblib" },
     { name = "jsonlines" },
     { name = "loguru" },
+    { name = "mmcv-lite" },
     { name = "mmengine" },
     { name = "networkx" },
     { name = "numpy" },
@@ -271,7 +271,6 @@ requires-dist = [
     { name = "black", specifier = ">=26.3.1" },
     { name = "chump", specifier = ">=1.6.0" },
     { name = "cython", specifier = ">=3.2.4" },
-    { name = "detectron2", git = "https://github.com/facebookresearch/detectron2.git?rev=a1ce2f9" },
     { name = "dill", specifier = ">=0.4.1" },
     { name = "einops", specifier = ">=0.8.2" },
     { name = "ffmpeg", specifier = ">=1.4" },
@@ -284,6 +283,7 @@ requires-dist = [
     { name = "joblib", specifier = ">=1.5.3" },
     { name = "jsonlines", specifier = ">=4.0.0" },
     { name = "loguru", specifier = ">=0.7.3" },
+    { name = "mmcv-lite", specifier = ">=2.1.0,<2.2.0" },
     { name = "mmengine", specifier = ">=0.10.7" },
     { name = "networkx", specifier = "==3.2.1" },
     { name = "numpy", specifier = ">=2.4.3" },
@@ -658,28 +658,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/8f/b1/d6a353c9b147848122a0db370863601fdf56de2d983b5c4a6a11e6ee3cd7/cython-3.2.4-cp39-abi3-win32.whl", hash = "sha256:2b1f12c0e4798293d2754e73cd6f35fa5bbdf072bdc14bc6fc442c059ef2d290", size = 2437463, upload-time = "2026-01-04T14:15:53.787Z" },
     { url = "https://files.pythonhosted.org/packages/2d/d8/319a1263b9c33b71343adfd407e5daffd453daef47ebc7b642820a8b68ed/cython-3.2.4-cp39-abi3-win_arm64.whl", hash = "sha256:3b8e62049afef9da931d55de82d8f46c9a147313b69d5ff6af6e9121d545ce7a", size = 2442754, upload-time = "2026-01-04T14:15:55.382Z" },
     { url = "https://files.pythonhosted.org/packages/ff/fa/d3c15189f7c52aaefbaea76fb012119b04b9013f4bf446cb4eb4c26c4e6b/cython-3.2.4-py3-none-any.whl", hash = "sha256:732fc93bc33ae4b14f6afaca663b916c2fdd5dcbfad7114e17fb2434eeaea45c", size = 1257078, upload-time = "2026-01-04T14:14:12.373Z" },
-]
-
-[[package]]
-name = "detectron2"
-version = "0.6"
-source = { git = "https://github.com/facebookresearch/detectron2.git?rev=a1ce2f9#a1ce2f956a1d2212ad672e3c47d53405c2fe4312" }
-dependencies = [
-    { name = "black" },
-    { name = "cloudpickle" },
-    { name = "fvcore" },
-    { name = "hydra-core" },
-    { name = "iopath" },
-    { name = "matplotlib" },
-    { name = "omegaconf" },
-    { name = "packaging" },
-    { name = "pillow" },
-    { name = "pycocotools" },
-    { name = "tabulate" },
-    { name = "tensorboard" },
-    { name = "termcolor" },
-    { name = "tqdm" },
-    { name = "yacs" },
 ]
 
 [[package]]
@@ -1518,6 +1496,26 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "mmcv-lite"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "addict" },
+    { name = "mmengine" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "packaging" },
+    { name = "pillow" },
+    { name = "pyyaml" },
+    { name = "regex", marker = "sys_platform == 'win32'" },
+    { name = "yapf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/88/16/fdf13cf796f5224816e78aa742774bf811783357caa237ee38418e6b4402/mmcv-lite-2.1.0.tar.gz", hash = "sha256:18d3c648e7c0a39c62c1a09ea6755ba1702477dac0d79072a9844f1d860cd747", size = 471443, upload-time = "2023-10-17T11:30:48.912Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/8b/22d3a89ad9cc9fe00af8b191da3d2f488f5162c1e657d41b9ab38540ee51/mmcv_lite-2.1.0-py2.py3-none-any.whl", hash = "sha256:1d9913c35f793de4a3a022b93cecb712e1e7262eb4704eb8cd15e623dd375000", size = 719965, upload-time = "2023-10-17T11:30:46.793Z" },
 ]
 
 [[package]]

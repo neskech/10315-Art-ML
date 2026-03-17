@@ -1,6 +1,8 @@
 import os
 import pandas as pd
 from pathlib import Path
+
+import tqdm
 from classification_features.inference import PoseClassificationFeatures
 
 CURRENT_DIR = Path(__file__).parent.resolve()
@@ -13,7 +15,8 @@ def _get_features_dataframe(
     data = []
     extractor = PoseClassificationFeatures()
 
-    for _, row in poses_dataframe.iterrows():
+    progress_bar = tqdm.tqdm(poses_dataframe.iterrows(), "Processing...", total=len(poses_dataframe))
+    for _, row in progress_bar:
         relative_image_path = row["image_path"]
 
         # Skip if already processed
@@ -23,7 +26,7 @@ def _get_features_dataframe(
         ):
             continue
 
-        keypoints_2d = row["keypoints_2d"]
+        keypoints_2d = row["pred_keypoints_2d"]
         embedding = extractor.extract_embedding(
             keypoints_2d
         )  # This is your numpy array
@@ -45,8 +48,6 @@ def _write_poses(data_path: str):
         existingDataframe = pd.read_parquet(classification_features_path)
     else:
         existingDataframe = pd.DataFrame([])
-
-    classification_features_path = os.path.join(data_path, "")
 
     poses_path = os.path.join(data_path, "processed_poses.parquet")
     poses_dataframe = pd.read_parquet(poses_path)

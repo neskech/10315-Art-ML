@@ -42,6 +42,9 @@ def _topKRetrieval(
 
 
 def runTopKRetrieval(pose_image_path: str, distanceFunction, k: int) -> list[PoseData]:
+    if not os.path.exists(pose_image_path):
+        raise Exception("That shit doesnt exist", pose_image_path)
+
     parquet_path = os.path.join(DATA_PATH, "processed_poses.parquet")
     dataframe = pd.read_parquet(parquet_path)
 

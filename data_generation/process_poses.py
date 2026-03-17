@@ -27,7 +27,7 @@ def _predict_poses(
             path = os.path.join(root, file)
             relative_path = path.removeprefix(poses_path)
 
-            if not path.endswith(".png"):
+            if not path.endswith(".png") and not path.endswith('.jpg') and not path.endswith('jpeg'):
                 continue
 
             if (
