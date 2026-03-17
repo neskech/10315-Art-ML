@@ -3,14 +3,14 @@ import roma
 import torch
 from typing import Dict, List
 
-from preprocess import prepare_batch_correctly
-from sam3d.sam_3d_body.data.transforms.common import Compose
-from sam3d.sam_3d_body.models.meta_arch.sam3d_body import SAM3DBody
-from sam3d.sam_3d_body.models.modules.mhr_utils import (
+from pose_module.preprocess import prepare_batch_correctly
+from pose_module.sam3d.sam_3d_body.data.transforms.common import Compose
+from pose_module.sam3d.sam_3d_body.models.meta_arch.sam3d_body import SAM3DBody
+from pose_module.sam3d.sam_3d_body.models.modules.mhr_utils import (
     fix_wrist_euler,
     rotation_angle_difference,
 )
-from sam3d.sam_3d_body.utils.dist import recursive_to
+from pose_module.sam3d.sam_3d_body.utils.dist import recursive_to
 
 
 def _tensor_to_numpy_list(tensor_batch: torch.Tensor) -> List[np.ndarray]:

@@ -3,22 +3,33 @@ Modal wrapper for SAM 3D Body 2D pose inference.
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional
-from pose_module.inferFull import infer_full
-from pose_module.preprocess import prepare_batch_correctly
-from pose_module.sam3d.sam_3d_body.data.transforms.common import (
+import sys
+
+
+# Allow imports from the sam3d repo to work
+current_dir = Path(__file__).resolve().parent
+sam3d_repo_path = current_dir / "sam3d"
+
+if str(sam3d_repo_path) not in sys.path:
+    sys.path.insert(0, str(sam3d_repo_path))
+
+
+from typing import Any, Dict, Optional  # noqa: E402
+from pose_module.inferFull import infer_full # noqa: E402
+from pose_module.preprocess import prepare_batch_correctly # noqa: E402
+from pose_module.sam3d.sam_3d_body.data.transforms.common import ( # noqa: E402
     Compose,
     GetBBoxCenterScale,
     TopdownAffine,
     VisionTransformWrapper,
-)
-from pose_module.sam3d.sam_3d_body.utils.dist import recursive_to
-from sam3d.sam_3d_body import load_sam_3d_body
-from sam3d.sam_3d_body.metadata.mhr70 import mhr_names
-from sam3d.tools.build_detector import HumanDetector
-import numpy as np
-import torch
-from torchvision.transforms import ToTensor
+) 
+from pose_module.sam3d.sam_3d_body.utils.dist import recursive_to # noqa: E402
+from pose_module.sam3d.sam_3d_body import load_sam_3d_body # noqa: E402
+from pose_module.sam3d.sam_3d_body.metadata.mhr70 import mhr_names # noqa: E402
+from pose_module.sam3d.tools.build_detector import HumanDetector # noqa: E402
+import numpy as np # noqa: E402
+import torch # noqa: E402
+from torchvision.transforms import ToTensor # noqa: E402
 
 
 class SAM3DBodyInference:
