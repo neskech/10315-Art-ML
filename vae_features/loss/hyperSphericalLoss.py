@@ -3,6 +3,8 @@ import torch
 from torch import nn
 from power_spherical import PowerSpherical, HypersphericalUniform
 
+from vae_features.model.graphVae import euler_to_6d
+
 
 class HypersphericalVAELoss(nn.Module):
     def __init__(self, use_6d_rotation_format: bool) -> None:
@@ -16,6 +18,11 @@ class HypersphericalVAELoss(nn.Module):
         latent_distributions: torch.distributions.Distribution,
         kl_weight: float,
     ):
+        if self.use_6d_rotations:
+            # Predicted joint angles should already be in 6d if this
+            # boolean has been set to true
+            label_joint_angles = euler_to_6d(label_joint_angles)
+
         reconstruction_loss = torch.mean(
             (predicted_joint_angles - label_joint_angles).sum(dim=-1).square()
         )
