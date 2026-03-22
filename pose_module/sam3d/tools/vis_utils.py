@@ -11,6 +11,19 @@ visualizer = SkeletonVisualizer(line_width=2, radius=5)
 visualizer.set_pose_meta(mhr70_pose_info)
 
 
+def _to_numpy(x):
+    if hasattr(x, "detach"):
+        return x.detach().cpu().numpy()
+    return np.asarray(x)
+
+
+def _root_rotation_matrix_in_vertex_frame(root_rotation):
+    root_rotation = _to_numpy(root_rotation).reshape(3)
+    rotation_matrix, _ = cv2.Rodrigues(root_rotation)
+    vertex_frame_transform = np.diag([1.0, -1.0, -1.0])
+    return vertex_frame_transform @ rotation_matrix @ vertex_frame_transform
+
+
 def visualize_sample(img_cv2, outputs, faces):
     img_keypoints = img_cv2.copy()
     img_mesh = img_cv2.copy()
@@ -195,3 +208,76 @@ def visualize_on_white(img_cv2, outputs, faces):
     )
 
     return img_white.astype(np.uint8)
+
+
+def visualize_pose_with_camera_reference(
+    camera_reference_img_cv2,
+    camera_reference_output,
+    pose_reference_output,
+    faces,
+    white_background=False,
+    center_on_camera=False,
+):
+    base_img = (
+        np.ones_like(camera_reference_img_cv2) * 255
+        if white_background
+        else camera_reference_img_cv2.copy()
+    )
+
+    focal_length = _to_numpy(pose_reference_output["focal_length"])
+    pose_translation = _to_numpy(pose_reference_output["pred_cam_t"]).copy()
+    pred_vertices = _to_numpy(pose_reference_output["pred_vertices"]).copy()
+
+    reference_rotation_matrix = _root_rotation_matrix_in_vertex_frame(
+        camera_reference_output["root_rotation"]
+    )
+    pose_rotation_matrix = _root_rotation_matrix_in_vertex_frame(
+        pose_reference_output["root_rotation"]
+    )
+    rotation_delta = reference_rotation_matrix @ pose_rotation_matrix.T
+
+    upright_correction, _ = cv2.Rodrigues(np.array([0.0, 0.0, np.pi], dtype=np.float32))
+    rotation_delta = upright_correction @ rotation_delta
+
+    mesh_center = np.mean(pred_vertices, axis=0)
+    pred_vertices = (pred_vertices - mesh_center) @ rotation_delta.T + mesh_center
+
+    pred_vertices[:, 0] *= -1.0
+    render_faces = faces[:, [0, 2, 1]]
+
+    render_translation = pose_translation
+    if center_on_camera:
+        bounds_center = (
+            np.max(pred_vertices, axis=0) + np.min(pred_vertices, axis=0)
+        ) / 2
+        pred_vertices = pred_vertices - bounds_center
+
+        focal_value = float(np.mean(np.reshape(focal_length, -1)))
+        img_h, img_w = base_img.shape[:2]
+        frame_margin = 0.85
+        half_w = max((img_w * 0.5) * frame_margin, 1.0)
+        half_h = max((img_h * 0.5) * frame_margin, 1.0)
+
+        req_z_x = (
+            focal_value * np.abs(pred_vertices[:, 0]) / half_w - pred_vertices[:, 2]
+        )
+        req_z_y = (
+            focal_value * np.abs(pred_vertices[:, 1]) / half_h - pred_vertices[:, 2]
+        )
+        target_z = max(float(np.max(req_z_x)), float(np.max(req_z_y)), 0.1) + 0.05
+
+        render_translation = np.array([0.0, 0.0, target_z], dtype=np.float32)
+
+    renderer = Renderer(focal_length=focal_length, faces=render_faces)
+    rendered_img = (
+        renderer(
+            pred_vertices,
+            render_translation,
+            base_img,
+            mesh_base_color=LIGHT_BLUE,
+            scene_bg_color=(1, 1, 1),
+        )
+        * 255
+    )
+
+    return rendered_img.astype(np.uint8)
