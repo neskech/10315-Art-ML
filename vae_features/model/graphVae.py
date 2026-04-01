@@ -7,6 +7,7 @@ from vae_features.utils.graphormerGraph import GraphFormerGraph
 from vae_features.utils.jointEmbedding import JointEmbedding
 from vae_features.utils.positionalEncoding import PositionalEncoding1D
 from vae_features.utils.skeletonFormat import SkeletonFormat
+from power_spherical import PowerSpherical
 
 
 class GraphVAE(nn.Module):
@@ -28,7 +29,7 @@ class GraphVAE(nn.Module):
 
         self.skeletonFormat = skeleton_format
         self.encoder_graph = GraphFormerGraph.from_skeleton_format(
-            skeleton_format, num_virtual_nodes=1
+            skeleton_format, num_virtual_nodes=2
         )
         self.virtual_node_index = self.skeletonFormat.get_joint_count()
 
@@ -57,7 +58,7 @@ class GraphVAE(nn.Module):
             num_layers=num_layers,
             node_dimension=decoder_joint_embedding_dimension,
             edge_dimension=4,
-            node_embedding_dimension=decoder_joint_embedding_dimension,
+            node_embedding_dimension=joint_embedding_dimension,
             edge_embedding_dimension=bone_embedding_dimension,
             num_attention_heads=num_attention_heads,
             bottleneck_dimension=bottleneck_dimensions,
@@ -69,10 +70,15 @@ class GraphVAE(nn.Module):
             max_out_degree=self.decoder_graph.num_nodes(),
         )
 
+        self.encoder_latent_head = nn.Linear(
+            joint_embedding_dimension, joint_embedding_dimension
+        )
+        self.encoder_concentration_head = nn.Linear(joint_embedding_dimension, 1)
+
         if self.use_6d_rotations:
-            self.decoder_head = nn.Linear(decoder_joint_embedding_dimension, 6)
+            self.decoder_head = nn.Linear(joint_embedding_dimension, 6)
         else:
-            self.decoder_head = nn.Linear(decoder_joint_embedding_dimension, 3)
+            self.decoder_head = nn.Linear(joint_embedding_dimension, 3)
 
         self.joint_embedding = JointEmbedding(
             skeleton_format, embedding_dimension=decoder_joint_embedding_dimension
@@ -106,9 +112,15 @@ class GraphVAE(nn.Module):
             graph=self.encoder_graph,
             attention_mask=None,
         )
-        latent = joint_encodings[self.virtual_node_index]
+        latent = self.encoder_latent_head.forward(
+            joint_encodings[self.virtual_node_index]
+        )
+        concentration = self.encoder_concentration_head.forward(
+            joint_encodings[self.virtual_node_index + 1]
+        )
         latent = latent / (torch.norm(latent, dim=-1) + 1e-6)
-        return latent
+        distribution = PowerSpherical(loc=latent, scale=concentration)
+        return distribution, latent, concentration
 
     def decode(self, latent: torch.Tensor, use_edge_features=True) -> torch.Tensor:
         batch_size = latent.shape[0]
@@ -120,13 +132,14 @@ class GraphVAE(nn.Module):
             self_attention_mask=None,
             cross_attention_mask=None,
         )
+        # (B, 127, 3)
         joint_angles = self.decoder_head(decoded_sequence)
         return joint_angles
 
     def encode_and_reconstruct(
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        latent = self.encode(x)
+        _, latent, _ = self.encode(x)
         reconstruction = self.decode(latent)
         return latent, reconstruction
 
