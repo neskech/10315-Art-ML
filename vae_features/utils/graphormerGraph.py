@@ -2,8 +2,12 @@ import itertools
 
 import torch
 
-from graph import Graph
-from skeletonFormat import SkeletonFormat
+try:
+    from .graph import Graph
+    from .skeletonFormat import SkeletonFormat
+except ImportError:
+    from graph import Graph
+    from skeletonFormat import SkeletonFormat
 
 
 class GraphFormerGraph(Graph[int]):

@@ -10,9 +10,8 @@ def rotation_matrix_to_6d(x: torch.Tensor):
         matrices (torch.Tensor): A tensor of shape (B, 3, 3) containing
         the rotation matrices
     """
-    B = x.shape[0]
-    x = x[:, :, :2]
-    return x.reshape(B, 6)
+    x = x[..., :, :2]
+    return x.reshape(*x.shape[:-2], 6)
 
 
 def _axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
@@ -71,3 +70,55 @@ def euler_to_rotation_matrix(euler_angles: torch.Tensor, convention: str = "XYZ"
 def euler_to_6d(euler_angles: torch.Tensor, convention: str = "XYZ"):
     matrix = euler_to_rotation_matrix(euler_angles, convention)
     return rotation_matrix_to_6d(matrix)
+
+
+def rotation_6d_to_matrix(x: torch.Tensor) -> torch.Tensor:
+    """
+    Convert 6D rotations to 3x3 rotation matrices using Gram-Schmidt.
+    Supports shape (..., 6).
+    """
+    if x.shape[-1] != 6:
+        raise ValueError(f"Expected last dim == 6, got {x.shape[-1]}")
+
+    a1 = x[..., 0:3]
+    a2 = x[..., 3:6]
+
+    b1 = torch.nn.functional.normalize(a1, dim=-1)
+    b2 = a2 - (b1 * a2).sum(dim=-1, keepdim=True) * b1
+    b2 = torch.nn.functional.normalize(b2, dim=-1)
+    b3 = torch.cross(b1, b2, dim=-1)
+
+    return torch.stack([b1, b2, b3], dim=-1)
+
+
+def rotation_matrix_to_euler_xyz(rotation_matrix: torch.Tensor) -> torch.Tensor:
+    """
+    Convert rotation matrices to Euler XYZ angles.
+    Supports shape (..., 3, 3), returns (..., 3).
+    """
+    if rotation_matrix.shape[-2:] != (3, 3):
+        raise ValueError(
+            f"Expected rotation matrix shape (..., 3, 3), got {rotation_matrix.shape}"
+        )
+
+    sy = rotation_matrix[..., 0, 2].clamp(-1.0, 1.0)
+    y = torch.asin(sy)
+
+    x = torch.atan2(-rotation_matrix[..., 1, 2], rotation_matrix[..., 2, 2])
+    z = torch.atan2(-rotation_matrix[..., 0, 1], rotation_matrix[..., 0, 0])
+
+    # Gimbal lock handling when cos(y) ~= 0
+    singular = torch.cos(y).abs() < 1e-6
+    x_alt = torch.atan2(rotation_matrix[..., 2, 1], rotation_matrix[..., 1, 1])
+    z_alt = torch.zeros_like(z)
+
+    x = torch.where(singular, x_alt, x)
+    z = torch.where(singular, z_alt, z)
+
+    return torch.stack([x, y, z], dim=-1)
+
+
+def rotation_6d_to_euler(x: torch.Tensor) -> torch.Tensor:
+    """Convert 6D rotations to Euler XYZ angles."""
+    matrix = rotation_6d_to_matrix(x)
+    return rotation_matrix_to_euler_xyz(matrix)

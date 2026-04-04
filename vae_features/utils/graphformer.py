@@ -1,14 +1,24 @@
 import torch
 from torch import nn
 
-from feedForward import BottleneckFeedForward
-from graphBlocks import (
-    CentralityEncoding,
-    EdgeEncoding,
-    MultiHeadGraphAttention,
-    SpatialEncoding,
-)
-from graphormerGraph import GraphFormerGraph
+try:
+    from .feedForward import BottleneckFeedForward
+    from .graphBlocks import (
+        CentralityEncoding,
+        EdgeEncoding,
+        MultiHeadGraphAttention,
+        SpatialEncoding,
+    )
+    from .graphormerGraph import GraphFormerGraph
+except ImportError:
+    from feedForward import BottleneckFeedForward
+    from graphBlocks import (
+        CentralityEncoding,
+        EdgeEncoding,
+        MultiHeadGraphAttention,
+        SpatialEncoding,
+    )
+    from graphormerGraph import GraphFormerGraph
 
 
 class GraphFormerDecoderLayer(nn.Module):

@@ -1,6 +1,9 @@
 from torch import nn
 
-from skeletonFormat import SkeletonFormat
+try:
+    from .skeletonFormat import SkeletonFormat
+except ImportError:
+    from skeletonFormat import SkeletonFormat
 
 
 class JointEmbedding(nn.Module):

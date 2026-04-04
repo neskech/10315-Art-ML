@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import itertools
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TypeVar
 
 import torch
 
-from graph import Graph
+try:
+    from .graph import Graph
+except ImportError:
+    from graph import Graph
 
 
 @dataclass(frozen=True)
@@ -143,6 +148,14 @@ class SkeletonFormat:
         instance = SkeletonFormat.from_joints_and_graph(joint_names, graph)
         instance.set_rest_pose(rest_pose)
         return instance
+
+    @classmethod
+    def from_json_file(cls, json_path: str | Path):
+        """Creates a SkeletonFormat instance from a JSON file path."""
+        path = Path(json_path)
+        with path.open("r", encoding="utf-8") as f:
+            save_dict = json.load(f)
+        return cls.from_dict(save_dict)
 
     def set_rest_pose(self, rest_pose: torch.Tensor):
         """Sets the rest pose of the skeleton format.

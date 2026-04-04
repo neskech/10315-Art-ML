@@ -19,6 +19,7 @@ class JointData:
 
 
 NUM_JOINTS = 127
+# The first joint index just contains a bunch of 0's
 ROOT_JOINT_IDX = 1
 
 
@@ -31,6 +32,7 @@ class PostProcessor:
         parameter_transform = np.load(transform_path)
         # Shape (889, 321)
         self.parameter_transform = torch.from_numpy(parameter_transform).to(self.device)
+        self.inv_parameter_transform = torch.linalg.pinv(self.parameter_transform.T)
 
     def _mhr_to_raw_joint_data(self, mhr_parameters: torch.Tensor):
         """
@@ -77,3 +79,62 @@ class PostProcessor:
             root_translation=root_translation,
             root_rotation=root_rotation,
         )
+
+    def raw_to_mhr_parameters(self, raw: torch.Tensor):
+        """
+        Inverts raw joint parameters (B, 889) back to MHR parameters (B, 204).
+        """
+        padded_reconstructed = raw @ self.inv_parameter_transform
+        mhr_parameters = padded_reconstructed[:, :204]
+        return mhr_parameters
+
+    def patch_raw_with_joint_angles(
+        self,
+        base_raw: torch.Tensor,
+        joint_angles_mhr_order: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Returns a new raw tensor where only Euler angle slots are replaced.
+
+        Args:
+            base_raw: Tensor with shape (B, 889).
+            joint_angles_mhr_order: Euler angles in MHR joint ordering with shape
+                (B, 127, 3).
+        """
+        if base_raw.ndim != 2 or base_raw.shape[1] != NUM_JOINTS * 7:
+            raise ValueError(f"Expected base_raw shape (B, {NUM_JOINTS * 7}), got {base_raw.shape}")
+        if joint_angles_mhr_order.ndim != 3 or joint_angles_mhr_order.shape[1:] != (NUM_JOINTS, 3):
+            raise ValueError(
+                f"Expected joint_angles_mhr_order shape (B, {NUM_JOINTS}, 3), got "
+                f"{joint_angles_mhr_order.shape}"
+            )
+        if base_raw.shape[0] != joint_angles_mhr_order.shape[0]:
+            raise ValueError(
+                f"Batch mismatch between raw ({base_raw.shape[0]}) and joint angles "
+                f"({joint_angles_mhr_order.shape[0]})"
+            )
+
+        base = base_raw.view(base_raw.shape[0], NUM_JOINTS, 7)
+        patched = torch.cat(
+            [base[:, :, 0:3], joint_angles_mhr_order, base[:, :, 6:7]],
+            dim=-1,
+        )
+        return patched.reshape(base_raw.shape[0], NUM_JOINTS * 7)
+
+    def joint_angles_to_mhr_parameters(
+        self,
+        joint_angles_mhr_order: torch.Tensor,
+        base_raw: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Converts reconstructed joint angles to MHR parameters using base raw tensor.
+
+        Returns:
+            tuple[patched_raw, mhr_parameters]
+        """
+        patched_raw = self.patch_raw_with_joint_angles(
+            base_raw=base_raw,
+            joint_angles_mhr_order=joint_angles_mhr_order,
+        )
+        mhr_parameters = self.raw_to_mhr_parameters(patched_raw)
+        return patched_raw, mhr_parameters

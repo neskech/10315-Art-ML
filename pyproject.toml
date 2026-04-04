@@ -48,6 +48,7 @@ dependencies = [
     "setuptools<70.0.0",
     "pyarrow>=23.0.1",
     "mmcv-lite>=2.1.0,<2.2.0",
+    "torchinfo>=1.8.0",
 ]
 
 [tool.uv.sources]
