@@ -244,13 +244,18 @@ class Graph(Generic[T]):  # noqa: UP046
             tuple[T, E]: A tuple containing the current node and its
                 associated state during the traversal.
         """
+        visited: set[T] = set()
         queue = deque([(node, initial_state)])
+        visited.add(node)
         while len(queue) > 0:
             current_node, state = queue.popleft()
             yield current_node, state
             for child in self.get_children(current_node):
+                if child in visited:
+                    continue
+                visited.add(child)
                 new_state = fold_function(child, state)
-                queue.appendleft((child, new_state))
+                queue.append((child, new_state))
 
     def dfs(self, node: T, fold_function: Callable[[T, E], E], initial_state: E):
         """
@@ -266,9 +271,13 @@ class Graph(Generic[T]):  # noqa: UP046
             tuple[T, E]: A tuple containing the current node and its
                 associated state during the traversal.
         """
+        visited: set[T] = set()
         stack = [(node, initial_state)]
         while len(stack) > 0:
             current_node, state = stack.pop()
+            if current_node in visited:
+                continue
+            visited.add(current_node)
             yield current_node, state
 
             for child in self.get_children(current_node):
@@ -294,15 +303,34 @@ class Graph(Generic[T]):  # noqa: UP046
         if node2 not in self.adjacency_list:
             raise ArgumentError(f"Node '{node2}' does not exist")
 
-        def fold_function(node: T, state: list[T]) -> list[T]:
-            return state + [node]
+        # Standard BFS shortest-path with explicit predecessor tracking.
+        visited: set[T] = set([node1])
+        queue = deque([node1])
+        predecessor: dict[T, T | None] = {node1: None}
 
-        search = self.bfs(node1, fold_function, [node1])
-        for node, path in search:
-            if node == node2:
-                return path
+        while len(queue) > 0:
+            current_node = queue.popleft()
+            if current_node == node2:
+                break
 
-        return None
+            for child in self.get_children(current_node):
+                if child in visited:
+                    continue
+                visited.add(child)
+                predecessor[child] = current_node
+                queue.append(child)
+
+        if node2 not in predecessor:
+            return None
+
+        path: list[T] = []
+        cur: T | None = node2
+        while cur is not None:
+            path.append(cur)
+            cur = predecessor[cur]
+        path.reverse()
+        return path
+
 
     def to_dict(self):
         """

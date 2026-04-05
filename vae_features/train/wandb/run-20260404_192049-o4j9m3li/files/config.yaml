@@ -1,0 +1,133 @@
+_wandb:
+    value:
+        cli_version: 0.25.1
+        e:
+            r2vegg2amep5ip99xk0vof9qhfyznpx0:
+                apple: {}
+                codePath: /Users/ness/Projects/Group/10315-Art-ML/vae_features/train/train_vae.ipynb
+                codePathLocal: train_vae.ipynb
+                cpu_count: 8
+                cpu_count_logical: 8
+                disk:
+                    /:
+                        total: "494384795648"
+                        used: "484896837632"
+                email: cmellor@andrew.cmu.edu
+                executable: /Users/ness/Projects/Group/10315-Art-ML/.venv/bin/python
+                git:
+                    commit: 968178bdaf2ce9787d10cdbf6a5b182cbe2fd020
+                    remote: https://github.com/neskech/10315-Art-ML.git
+                host: Craigs-MacBook-Pro-4.local
+                memory:
+                    total: "17179869184"
+                os: macOS-26.3.1-arm64-arm-64bit
+                program: /Users/ness/Projects/Group/10315-Art-ML/vae_features/train/train_vae.ipynb
+                python: CPython 3.11.13
+                root: /Users/ness/Projects/Group/10315-Art-ML/vae_features/train
+                startedAt: "2026-04-04T23:20:49.492599Z"
+                writerId: r2vegg2amep5ip99xk0vof9qhfyznpx0
+        m: []
+        python_version: 3.11.13
+        t:
+            "1":
+                - 1
+                - 5
+                - 53
+            "2":
+                - 1
+                - 5
+                - 9
+                - 41
+                - 53
+                - 103
+            "3":
+                - 2
+                - 13
+                - 16
+            "4": 3.11.13
+            "5": 0.25.1
+            "8":
+                - 1
+                - 2
+            "10":
+                - 20
+            "12": 0.25.1
+            "13": darwin-arm64
+BATCH_SIZE:
+    value: 128
+CHECKPOINT_BASENAME:
+    value: mhr_vae
+CLIP_GRADIENTS:
+    value: false
+DATA_DIR:
+    value: /Users/ness/Projects/Group/10315-Art-ML/data
+DECAY_EPOCHS:
+    value: 30
+EMPTY_CACHE_AFTER_BATCH:
+    value: false
+FF_DROPOUT:
+    value: 0.1
+FF_ENCODER_SIZES:
+    value:
+        - 381
+        - 512
+        - 256
+        - 128
+FF_NORMALIZATION:
+    value: layer
+FF_USE_RESIDUALS:
+    value: false
+GRAD_ACCUMULATION_STEPS:
+    value: 1
+GRAPH_BONE_EMBED_DIM:
+    value: 64
+GRAPH_BOTTLENECK_DIM:
+    value: 256
+GRAPH_DECODER_JOINT_EMBED_DIM:
+    value: 64
+GRAPH_DROPOUT:
+    value: 0.1
+GRAPH_JOINT_EMBED_DIM:
+    value: 128
+GRAPH_NUM_HEADS:
+    value: 8
+GRAPH_NUM_LAYERS:
+    value: 4
+KL_WEIGHT:
+    value: 25
+LEARNING_RATE:
+    value: 0.001
+NUM_EPOCHS:
+    value: 20
+NUM_EPOCHS_TO_FULL_KL:
+    value: 5
+NUM_PCA_SAMPLES:
+    value: 100
+NUM_RECONSTRUCTION_SAMPLES:
+    value: 6
+SEED:
+    value: 42
+TOTAL_DATAPOINTS:
+    value: 50000
+TRAIN_RATIO:
+    value: 0.9
+USE_6D_ROTATIONS:
+    value: false
+USE_GRAPH_VAE:
+    value: false
+USE_VERTEX_SUPERVISION:
+    value: false
+USE_WANDB:
+    value: true
+VERTEX_LOSS_WEIGHT:
+    value: 1
+WANDB_PREVIOUS_RUN_ID:
+    value: null
+WANDB_PROJECT_NAME:
+    value: multimodal_2025
+WANDB_RUN_NAME:
+    value: VAE_MHR_train
+WARMUP_EPOCHS:
+    value: 2
+WEIGHT_DECAY:
+    value: 1e-08

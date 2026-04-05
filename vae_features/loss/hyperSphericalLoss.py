@@ -11,6 +11,7 @@ class HypersphericalVAELoss(nn.Module):
     def __init__(
         self,
         use_6d_rotation_format: bool,
+        device: torch.device,
         use_vertex_supervision: bool = False,
         mhr_model_path: str | None = None,
         vertex_loss_weight: float = 1.0,
@@ -27,7 +28,7 @@ class HypersphericalVAELoss(nn.Module):
                     "mhr_model_path must be provided when use_vertex_supervision=True"
                 )
             path = Path(mhr_model_path)
-            self.mhr_model = torch.jit.load(str(path))
+            self.mhr_model = torch.jit.load(str(path), map_location=device)
             self.mhr_model.eval()
 
     def forward(
@@ -38,18 +39,19 @@ class HypersphericalVAELoss(nn.Module):
         kl_weight: float,
         reconstructed_mhr_params: torch.Tensor | None = None,
         target_mhr_params: torch.Tensor | None = None,
-    ):
+    ) -> dict[str, torch.Tensor]:
         if self.use_6d_rotations:
             # Predicted joint angles should already be in 6d if this
             # boolean has been set to true
             label_joint_angles = euler_to_6d(label_joint_angles)
 
-        reconstruction_loss = torch.mean(
+        angle_rec_loss = torch.mean(
             (predicted_joint_angles - label_joint_angles).square().sum(dim=-1)
         )
         kl_loss = self._compute_kl_divergence(latent_distributions)
+        vertex_loss = torch.tensor(0.0, device=predicted_joint_angles.device)
 
-        total_loss = reconstruction_loss + kl_weight * kl_loss
+        total_loss = angle_rec_loss + kl_weight * kl_loss
         if self.use_vertex_supervision:
             if reconstructed_mhr_params is None or target_mhr_params is None:
                 raise ValueError(
@@ -61,7 +63,12 @@ class HypersphericalVAELoss(nn.Module):
             )
             total_loss = total_loss + self.vertex_loss_weight * vertex_loss
 
-        return total_loss
+        return {
+            "angle_rec_loss": angle_rec_loss,
+            "kl_loss": kl_loss,
+            "vertex_loss": vertex_loss,
+            "total_loss": total_loss,
+        }
 
     def _compute_vertex_loss(
         self,

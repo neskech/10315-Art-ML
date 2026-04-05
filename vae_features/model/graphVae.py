@@ -22,6 +22,7 @@ class GraphVAE(nn.Module):
         bottleneck_dimensions: int,
         bottleneck_activation: nn.Module,
         dropout: float,
+        device: torch.device,
         use_6d_rotation_format=False,
     ) -> None:
         super().__init__()
@@ -74,6 +75,7 @@ class GraphVAE(nn.Module):
             joint_embedding_dimension, joint_embedding_dimension
         )
         self.encoder_concentration_head = nn.Linear(joint_embedding_dimension, 1)
+        self.concentration_log_scale = nn.Parameter(torch.zeros(1))
 
         if self.use_6d_rotations:
             self.decoder_head = nn.Linear(joint_embedding_dimension, 6)
@@ -86,10 +88,12 @@ class GraphVAE(nn.Module):
 
         self.encoder_edge_features = get_edge_features(
             self.encoder_graph, self.skeletonFormat
-        )
+        ).to(device)
         self.decoder_edge_features = get_edge_features(
             self.decoder_graph, self.skeletonFormat
-        )
+        ).to(device)
+        self.latent_token = nn.Parameter(torch.randn(6 if self.use_6d_rotations else 3).to(device))
+        self.concentration_token = nn.Parameter(torch.randn(6 if self.use_6d_rotations else 3).to(device))
 
     def encode(
         self, joint_angles: torch.Tensor, use_edge_features=True
@@ -106,28 +110,37 @@ class GraphVAE(nn.Module):
         if self.use_6d_rotations:
             joint_angles = euler_to_6d(joint_angles)
 
+        B, _, _ = joint_angles.shape
+        latent_token = torch.Tensor.repeat(self.latent_token, (B, 1, 1))
+        concentration_token = torch.Tensor.repeat(self.concentration_token, (B, 1, 1))
+        joint_angles = torch.cat((joint_angles, latent_token, concentration_token), dim=1)
+        edge_features = torch.Tensor.repeat(self.encoder_edge_features, (B, 1, 1)) if use_edge_features else None
         joint_encodings, _ = self.encoder.forward_unpadded(
             node_features=joint_angles,
-            edge_features=self.encoder_edge_features if use_edge_features else None,
+            edge_features=edge_features,
             graph=self.encoder_graph,
             attention_mask=None,
         )
         latent = self.encoder_latent_head.forward(
-            joint_encodings[self.virtual_node_index]
+            joint_encodings[:, self.virtual_node_index]
         )
-        concentration = self.encoder_concentration_head.forward(
-            joint_encodings[self.virtual_node_index + 1]
+        log_concentration = self.encoder_concentration_head.forward(
+            joint_encodings[:, self.virtual_node_index + 1]
         )
-        latent = latent / (torch.norm(latent, dim=-1) + 1e-6)
+        concentration = torch.exp(self.concentration_log_scale + log_concentration)
+        latent = latent / (torch.norm(latent, dim=-1, keepdim=True) + 1e-6)
         distribution = PowerSpherical(loc=latent, scale=concentration)
         return distribution, latent, concentration
 
     def decode(self, latent: torch.Tensor, use_edge_features=True) -> torch.Tensor:
         batch_size = latent.shape[0]
+        if latent.dim() == 2:
+            latent = latent.unsqueeze(1) # Add a singleton seequence dimension
+        edge_features = torch.Tensor.repeat(self.decoder_edge_features, (batch_size, 1, 1)) if use_edge_features else None
         decoded_sequence, _, _ = self.decoder.forward_unpadded(
             node_features=self.joint_embedding.get_positional_embeddings(batch_size),
             encoder_outputs=latent,
-            edge_features=self.decoder_edge_features if use_edge_features else None,
+            edge_features=edge_features,
             graph=self.decoder_graph,
             self_attention_mask=None,
             cross_attention_mask=None,

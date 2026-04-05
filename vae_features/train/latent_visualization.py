@@ -46,7 +46,7 @@ def save_latent_projection_with_images(
     normalized_latents = latents / norms
     coords = _fit_reduce(normalized_latents, method=method)
 
-    fig, ax = plt.subplots(figsize=(12, 10))
+    fig, ax = plt.subplots(figsize=(16, 14))
     ax.set_title(title)
     ax.set_xlabel("Component 1")
     ax.set_ylabel("Component 2")
@@ -69,7 +69,7 @@ def save_latent_projection_with_images(
 
     ax.grid(alpha=0.25)
     plt.tight_layout()
-    fig.savefig(output_path, dpi=180)
+    fig.savefig(output_path, dpi=320)
     plt.close(fig)
 
     return str(output_path)
@@ -104,6 +104,7 @@ def save_fixed_latent_projection_with_images(
     seed: int,
     data_dir: str | Path,
     method: str = "pca",
+    thumbnail_zoom: float = 0.14,
 ) -> str | None:
     global _FIXED_LATENT_IMAGE_KEYS
 
@@ -143,5 +144,6 @@ def save_fixed_latent_projection_with_images(
         output_path=output_path,
         title=title,
         method=method,
+        thumbnail_zoom=thumbnail_zoom,
     )
     return saved_path

@@ -1,0 +1,22 @@
+2026-04-05 00:00:00,480 INFO    MainThread:16121 [wandb_setup.py:_flush():81] Current SDK version is 0.25.1
+2026-04-05 00:00:00,480 INFO    MainThread:16121 [wandb_setup.py:_flush():81] Configure stats pid to 16121
+2026-04-05 00:00:00,480 INFO    MainThread:16121 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-04-05 00:00:00,480 INFO    MainThread:16121 [wandb_init.py:setup_run_log_directory():717] Logging user logs to /Users/ness/Projects/Group/10315-Art-ML/vae_features/train/wandb/run-20260405_000000-7gahrprz/logs/debug.log
+2026-04-05 00:00:00,480 INFO    MainThread:16121 [wandb_init.py:setup_run_log_directory():718] Logging internal logs to /Users/ness/Projects/Group/10315-Art-ML/vae_features/train/wandb/run-20260405_000000-7gahrprz/logs/debug-internal.log
+2026-04-05 00:00:00,480 INFO    MainThread:16121 [wandb_init.py:monkeypatch_ipython():636] configuring jupyter hooks <wandb.sdk.wandb_init._WandbInit object at 0x14136e290>
+2026-04-05 00:00:00,480 INFO    MainThread:16121 [wandb_init.py:init():844] calling init triggers
+2026-04-05 00:00:00,481 INFO    MainThread:16121 [wandb_init.py:init():849] wandb.init called with sweep_config: {}
+config: {'NUM_EPOCHS': 20, 'BATCH_SIZE': 64, 'LEARNING_RATE': 0.001, 'WEIGHT_DECAY': 1e-08, 'USE_6D_ROTATIONS': False, 'USE_GRAPH_VAE': False, 'USE_VERTEX_SUPERVISION': True, 'WARMUP_EPOCHS': 2, 'DECAY_EPOCHS': 30, 'GRAD_ACCUMULATION_STEPS': 1, 'CLIP_GRADIENTS': False, 'EMPTY_CACHE_AFTER_BATCH': True, 'KL_WEIGHT': 25.0, 'NUM_EPOCHS_TO_FULL_KL': 5, 'VERTEX_LOSS_WEIGHT': 1.0, 'DATA_DIR': '/Users/ness/Projects/Group/10315-Art-ML/data', 'TRAIN_RATIO': 0.9, 'TOTAL_DATAPOINTS': 50000, 'USE_WANDB': True, 'WANDB_RUN_NAME': 'VAE_MHR_train', 'WANDB_PREVIOUS_RUN_ID': None, 'WANDB_PROJECT_NAME': 'multimodal_2025', 'NUM_PCA_SAMPLES': 20, 'PCA_THUMBNAIL_ZOOM': 0.8, 'NUM_RECONSTRUCTION_SAMPLES': 6, 'GRAPH_NUM_LAYERS': 2, 'GRAPH_JOINT_EMBED_DIM': 128, 'GRAPH_BONE_EMBED_DIM': 64, 'GRAPH_DECODER_JOINT_EMBED_DIM': 64, 'GRAPH_NUM_HEADS': 8, 'GRAPH_BOTTLENECK_DIM': 256, 'GRAPH_DROPOUT': 0.1, 'FF_ENCODER_SIZES': [381, 512, 256, 128], 'FF_DROPOUT': 0.1, 'FF_USE_RESIDUALS': False, 'FF_NORMALIZATION': 'layer', 'CHECKPOINT_BASENAME': 'mhr_vae', 'SEED': 42, '_wandb': {}}
+2026-04-05 00:00:00,481 INFO    MainThread:16121 [wandb_init.py:init():892] starting backend
+2026-04-05 00:00:00,814 INFO    MainThread:16121 [wandb_init.py:init():895] sending inform_init request
+2026-04-05 00:00:00,862 INFO    MainThread:16121 [wandb_init.py:init():903] backend started and connected
+2026-04-05 00:00:00,883 INFO    MainThread:16121 [wandb_run.py:_label_probe_notebook():1333] probe notebook
+2026-04-05 00:00:00,884 INFO    MainThread:16121 [wandb_init.py:init():973] updated telemetry
+2026-04-05 00:00:01,039 INFO    MainThread:16121 [wandb_init.py:init():997] communicating run to backend with 90.0 second timeout
+2026-04-05 00:00:01,358 INFO    MainThread:16121 [wandb_init.py:init():1042] starting run threads in backend
+2026-04-05 00:00:01,486 INFO    MainThread:16121 [wandb_run.py:_console_start():2524] atexit reg
+2026-04-05 00:00:01,486 INFO    MainThread:16121 [wandb_run.py:_redirect():2373] redirect: wrap_raw
+2026-04-05 00:00:01,486 INFO    MainThread:16121 [wandb_run.py:_redirect():2442] Wrapping output streams.
+2026-04-05 00:00:01,486 INFO    MainThread:16121 [wandb_run.py:_redirect():2465] Redirects installed.
+2026-04-05 00:00:01,488 INFO    MainThread:16121 [wandb_init.py:init():1082] run started, returning control to user process
+2026-04-05 00:00:02,067 INFO    MainThread:16121 [wandb_init.py:_post_run_cell_hook():606] [no run ID] resuming backend

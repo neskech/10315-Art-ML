@@ -15,6 +15,7 @@ class FeedForwardVAE(nn.Module):
         use_residuals: bool,
         activation: nn.Module,
         normalization: Norm,
+        device: torch.device
     ) -> None:
         super().__init__()
 
@@ -50,11 +51,15 @@ class FeedForwardVAE(nn.Module):
             bias=True,
         )
 
+        self.concentration_log_scale = nn.Parameter(torch.zeros(1).to(device))
+
     def encode(self, x: torch.Tensor) -> torch.distributions.Distribution:
         raw = self.encoder.forward(x)
         latent = raw[:, :-1]
-        concentration = raw[:, -1]
-        latent = latent / (torch.norm(latent, dim=-1) + 1e-6)
+        log_concentration = raw[:, -1]
+        
+        concentration = torch.exp(self.concentration_log_scale + log_concentration)
+        latent = latent / (torch.norm(latent, dim=-1, keepdim=True) + 1e-6)
         return PowerSpherical(loc=latent, scale=concentration), latent, concentration
 
     def decode(self, latent: torch.Tensor) -> torch.Tensor:

@@ -1,0 +1,29 @@
+{
+  "os": "macOS-26.3.1-arm64-arm-64bit",
+  "python": "CPython 3.11.13",
+  "startedAt": "2026-04-05T03:35:17.538073Z",
+  "program": "/Users/ness/Projects/Group/10315-Art-ML/vae_features/train/train_vae.ipynb",
+  "codePath": "/Users/ness/Projects/Group/10315-Art-ML/vae_features/train/train_vae.ipynb",
+  "codePathLocal": "train_vae.ipynb",
+  "git": {
+    "remote": "https://github.com/neskech/10315-Art-ML.git",
+    "commit": "968178bdaf2ce9787d10cdbf6a5b182cbe2fd020"
+  },
+  "email": "cmellor@andrew.cmu.edu",
+  "root": "/Users/ness/Projects/Group/10315-Art-ML/vae_features/train",
+  "host": "Craigs-MBP-4",
+  "executable": "/Users/ness/Projects/Group/10315-Art-ML/.venv/bin/python",
+  "cpu_count": 8,
+  "cpu_count_logical": 8,
+  "disk": {
+    "/": {
+      "total": "494384795648",
+      "used": "486396747776"
+    }
+  },
+  "memory": {
+    "total": "17179869184"
+  },
+  "apple": {},
+  "writerId": "g3p2vrfqhdweidtvn74w2fegecjzhi3g"
+}
