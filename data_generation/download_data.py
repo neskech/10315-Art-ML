@@ -1,40 +1,43 @@
-import os
 from pathlib import Path
 import zipfile
-import shutil
 import gdown
 
-FILE_ID = "1rO4YwzWQ78anjThH7une-waX86Fkv02q"
 CURRENT_DIR = Path(__file__).parent.resolve()
-DATA_PATH = CURRENT_DIR.parent / 'data'
+DATA_PATH = CURRENT_DIR.parent / "data"
+POSES_PATH = DATA_PATH / "poses"
+
+DATASETS = {
+    "pinterest": "13p9yeGYTBOPlYe8fOBkv3v6wbYat7LQo",
+    "sports": "1orMqDftzDZdKybAvqST9IEQpwZ04OcaQ",
+    "MPII": "1aS7qjZcTi2yjqshToLi4AL8fdhYX5g0x",
+}
+
 
 def main():
-    if os.path.exists(DATA_PATH):
-        shutil.rmtree(DATA_PATH)
+    POSES_PATH.mkdir(parents=True, exist_ok=True)
 
-    poses_path = os.path.join(DATA_PATH, "poses/")
-    os.makedirs(poses_path, exist_ok=True)
+    for dataset_name, file_id in DATASETS.items():
+        dataset_path = POSES_PATH / dataset_name
+        dataset_path.mkdir(parents=True, exist_ok=True)
+        zip_path = POSES_PATH / f"{dataset_name}.zip"
 
-    zip_path = os.path.join(DATA_PATH, "data.zip")
+        print(f"Downloading {dataset_name} from file ID: {file_id}")
+        gdown.download(id=file_id, output=str(zip_path), quiet=False)
 
-    print(f"Downloading file ID: {FILE_ID}")
-    gdown.download(id=FILE_ID, output=zip_path, quiet=False)
+        if not zip_path.exists():
+            raise Exception(
+                f"Download failed for dataset '{dataset_name}'. Ensure the Google Drive link is set to "
+                "'Anyone with the link can view'."
+            )
 
-    # Sanity check to ensure download succeeded before extracting
-    if not os.path.exists(zip_path):
-        raise Exception(
-            "Download failed! Ensure the Google Drive link is set to 'Anyone with the link can view'."
-        )
+        print(f"Extracting {dataset_name}...")
+        with zipfile.ZipFile(zip_path, "r") as f:
+            f.extractall(dataset_path)
 
-    # Extract and clean up
-    print("Extracting zip file...")
-    with zipfile.ZipFile(zip_path, "r") as f:
-        f.extractall(poses_path)
-
-    os.remove(zip_path)
+        zip_path.unlink()
 
 
 if __name__ == "__main__":
-    print("Downloading data from Google Drive...")
+    print("Downloading datasets from Google Drive...")
     main()
-    print("Finished downloading data from Google Drive!")
+    print("Finished downloading datasets from Google Drive!")

@@ -1,7 +1,6 @@
 from torch import nn
 import torch
 
-from vae_features.utils.angleFormat import euler_to_6d
 from vae_features.utils.graphformer import GraphFormerDecoder, GraphFormerEncoder
 from vae_features.utils.graphormerGraph import GraphFormerGraph
 from vae_features.utils.jointEmbedding import JointEmbedding
@@ -23,6 +22,7 @@ class GraphVAE(nn.Module):
         bottleneck_activation: nn.Module,
         dropout: float,
         device: torch.device,
+        initial_concentration: float = 1.0,
         use_6d_rotation_format=False,
     ) -> None:
         super().__init__()
@@ -75,7 +75,10 @@ class GraphVAE(nn.Module):
             joint_embedding_dimension, joint_embedding_dimension
         )
         self.encoder_concentration_head = nn.Linear(joint_embedding_dimension, 1)
-        self.concentration_log_scale = nn.Parameter(torch.zeros(1))
+        safe_initial_concentration = max(float(initial_concentration), 1e-6)
+        self.concentration_log_scale = nn.Parameter(
+            torch.log(torch.tensor(safe_initial_concentration, device=device))
+        )
 
         if self.use_6d_rotations:
             self.decoder_head = nn.Linear(joint_embedding_dimension, 6)
@@ -92,8 +95,12 @@ class GraphVAE(nn.Module):
         self.decoder_edge_features = get_edge_features(
             self.decoder_graph, self.skeletonFormat
         ).to(device)
-        self.latent_token = nn.Parameter(torch.randn(6 if self.use_6d_rotations else 3).to(device))
-        self.concentration_token = nn.Parameter(torch.randn(6 if self.use_6d_rotations else 3).to(device))
+        self.latent_token = nn.Parameter(
+            torch.randn(6 if self.use_6d_rotations else 3).to(device)
+        )
+        self.concentration_token = nn.Parameter(
+            torch.randn(6 if self.use_6d_rotations else 3).to(device)
+        )
 
     def encode(
         self, joint_angles: torch.Tensor, use_edge_features=True
@@ -101,20 +108,23 @@ class GraphVAE(nn.Module):
         """Encode into a latent vector
 
         Args:
-            joint_angles (torch.Tensor): Shape (B, N, 3) where
+            joint_angles (torch.Tensor): Shape (B, N, 3 or 6) where
                 N is the number of joints
 
         Returns:
             torch.Tensor: Encoded latent
         """
-        if self.use_6d_rotations:
-            joint_angles = euler_to_6d(joint_angles)
-
         B, _, _ = joint_angles.shape
         latent_token = torch.Tensor.repeat(self.latent_token, (B, 1, 1))
         concentration_token = torch.Tensor.repeat(self.concentration_token, (B, 1, 1))
-        joint_angles = torch.cat((joint_angles, latent_token, concentration_token), dim=1)
-        edge_features = torch.Tensor.repeat(self.encoder_edge_features, (B, 1, 1)) if use_edge_features else None
+        joint_angles = torch.cat(
+            (joint_angles, latent_token, concentration_token), dim=1
+        )
+        edge_features = (
+            torch.Tensor.repeat(self.encoder_edge_features, (B, 1, 1))
+            if use_edge_features
+            else None
+        )
         joint_encodings, _ = self.encoder.forward_unpadded(
             node_features=joint_angles,
             edge_features=edge_features,
@@ -135,8 +145,12 @@ class GraphVAE(nn.Module):
     def decode(self, latent: torch.Tensor, use_edge_features=True) -> torch.Tensor:
         batch_size = latent.shape[0]
         if latent.dim() == 2:
-            latent = latent.unsqueeze(1) # Add a singleton seequence dimension
-        edge_features = torch.Tensor.repeat(self.decoder_edge_features, (batch_size, 1, 1)) if use_edge_features else None
+            latent = latent.unsqueeze(1)  # Add a singleton seequence dimension
+        edge_features = (
+            torch.Tensor.repeat(self.decoder_edge_features, (batch_size, 1, 1))
+            if use_edge_features
+            else None
+        )
         decoded_sequence, _, _ = self.decoder.forward_unpadded(
             node_features=self.joint_embedding.get_positional_embeddings(batch_size),
             encoder_outputs=latent,
@@ -145,16 +159,25 @@ class GraphVAE(nn.Module):
             self_attention_mask=None,
             cross_attention_mask=None,
         )
-        # (B, 127, 3)
+        # (B, 127, 3 or 6)
         joint_angles = self.decoder_head(decoded_sequence)
         return joint_angles
 
     def encode_and_reconstruct(
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        _, latent, _ = self.encode(x)
-        reconstruction = self.decode(latent)
-        return latent, reconstruction
+        distribution, mean_latent, concentration = self.encode(x)
+        
+        # If the model is in training mode, sample from the distribution!
+        # rsample() ensures gradients can still flow backward through the noise.
+        if self.training:
+            z = distribution.rsample()
+        else:
+            # During evaluation/inference, it's standard to just use the mean
+            z = mean_latent
+            
+        reconstruction = self.decode(z)
+        return distribution, mean_latent, z, concentration, reconstruction
 
 
 def get_edge_features(graph: GraphFormerGraph, skeleton_format: SkeletonFormat):

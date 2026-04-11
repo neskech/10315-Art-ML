@@ -1,17 +1,29 @@
 import torch
 
 
+def wrap_euler_angles_pi(x: torch.Tensor) -> torch.Tensor:
+    """
+    Differentiable wrap to principal range (-pi, pi] using atan2(sin, cos).
+    Apply to raw decoder Euler outputs and targets before trig loss / MHR.
+    """
+    return torch.atan2(torch.sin(x), torch.cos(x))
+
+
 def rotation_matrix_to_6d(x: torch.Tensor):
     """
     Convert Rotation matrices to 6D rotation representations
     See https://arxiv.org/pdf/1812.07035 for discussion
+
+    Layout matches ``rotation_6d_to_matrix``: first column (3), then second
+    column (3). Using ``reshape`` on the (..., 3, 2) slice would flatten
+    row-major and break Gram–Schmidt recovery.
 
     Args:
         matrices (torch.Tensor): A tensor of shape (B, 3, 3) containing
         the rotation matrices
     """
     x = x[..., :, :2]
-    return x.reshape(*x.shape[:-2], 6)
+    return torch.cat([x[..., 0], x[..., 1]], dim=-1)
 
 
 def _axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:

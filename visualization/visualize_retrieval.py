@@ -7,9 +7,16 @@ import numpy as np
 from topKRetrieval.topKRetrieval import runTopKRetrieval
 from topKRetrieval.squaredDistanceRetrieval import squaredDistanceMetric
 from topKRetrieval.classificationFeatureRetrieval import getClassificationFeatureMetric
+from topKRetrieval.vaeFeatureRetrieval import getVAEFeatureMetric
 
 CURRENT_DIRECTORY = Path(__file__).parent.resolve()
 POSES_DIRECTORY = CURRENT_DIRECTORY.parent / "data" / "poses"
+
+
+def _data_relative_pose_image_path(relative_image_path: str) -> str:
+    """Repo-relative path under data/ (e.g. data/poses/...)."""
+    rel = Path(relative_image_path).as_posix()
+    return f"data/poses/{rel}"
 
 
 def _load_rgb_image(image_path: str):
@@ -110,7 +117,16 @@ def main():
     parser.add_argument("-i", "--image-path", type=str, required=True)
     parser.add_argument("-k", type=int, default=6)
     parser.add_argument(
-        "--metric", type=str, default="squared", choices=["squared", "classification"]
+        "--metric",
+        type=str,
+        default="squared",
+        choices=["squared", "classification", "vae"],
+    )
+    parser.add_argument(
+        "--vae-checkpoint",
+        type=str,
+        default="mhr_vae_best.pt",
+        help="Checkpoint filename under checkpoints/ used for VAE retrieval features.",
     )
     parser.add_argument(
         "--dedupe-epsilon",
@@ -134,11 +150,12 @@ def main():
     if args.dedupe_epsilon < 0:
         raise ValueError("dedupe-epsilon must be non-negative")
 
-    metric_map = {
-        "squared": squaredDistanceMetric,
-        "classification": getClassificationFeatureMetric(),
-    }
-    selected_metric = metric_map[args.metric]
+    if args.metric == "squared":
+        selected_metric = squaredDistanceMetric
+    elif args.metric == "classification":
+        selected_metric = getClassificationFeatureMetric()
+    else:
+        selected_metric = getVAEFeatureMetric(checkpoint_name=args.vae_checkpoint)
     overfetch_k = max(args.k, args.k * args.overfetch_factor)
 
     query_pose, overfetched_results = runTopKRetrieval(
@@ -161,6 +178,10 @@ def main():
             f"Warning: Only {len(results)} unique results found after deduplication "
             f"(requested {args.k})."
         )
+
+    print(f"Top-{len(results)} retrieved images (paths relative to repo, under data/):")
+    for rank, res_pose in enumerate(results, start=1):
+        print(f'"{_data_relative_pose_image_path(res_pose.relative_image_path)}"')
 
     render_results_table(
         args.image_path, results, query_pose, selected_metric, args.metric, args.output

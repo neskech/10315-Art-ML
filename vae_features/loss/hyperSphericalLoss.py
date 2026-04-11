@@ -4,7 +4,66 @@ import torch
 from torch import nn
 from power_spherical import PowerSpherical, HypersphericalUniform
 
-from vae_features.model.graphVae import euler_to_6d
+def _reshape_6d_joints(x: torch.Tensor) -> torch.Tensor:
+    """
+    Predictions and labels are already 6D per joint; only reshape to (batch, n_joints, 6).
+
+    Accepts (B, J, 6) or flattened (B, J*6), e.g. from FeedForwardVAE or MHRPoseDataset.
+    """
+    if x.ndim == 3:
+        if x.shape[-1] != 6:
+            raise ValueError(
+                f"use_6d_rotations=True expects last dim 6, got shape {tuple(x.shape)}"
+            )
+        return x
+    if x.ndim == 2:
+        flat = x.shape[1]
+        if flat % 6 != 0:
+            raise ValueError(
+                f"use_6d_rotations=True expects flattened dim divisible by 6, got {flat}"
+            )
+        return x.view(x.shape[0], -1, 6)
+    raise ValueError(
+        f"use_6d_rotations=True expects joint tensor of rank 2 or 3, got shape {tuple(x.shape)}"
+    )
+
+
+def _reshape_euler_joints(x: torch.Tensor) -> torch.Tensor:
+    """Reshape flat (B, J*3) or (B, J, 3) to (B, J, 3)."""
+    if x.ndim == 3:
+        if x.shape[-1] != 3:
+            raise ValueError(
+                f"Euler mode expects last dim 3, got shape {tuple(x.shape)}"
+            )
+        return x
+    if x.ndim == 2:
+        flat = x.shape[1]
+        if flat % 3 != 0:
+            raise ValueError(
+                f"Euler mode expects flattened dim divisible by 3, got {flat}"
+            )
+        return x.view(x.shape[0], -1, 3)
+    raise ValueError(
+        f"Euler mode expects joint tensor of rank 2 or 3, got shape {tuple(x.shape)}"
+    )
+
+
+def _angle_reconstruction_loss_mse(pred: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
+    return torch.mean((pred - label).square().sum(dim=-1).sum(dim=-1))
+
+
+def _angle_reconstruction_loss_trig_euler(pred: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
+    """
+    Continuous angular loss on radians: avoids MSE ambiguity at ±π wraps.
+
+    L = 1/2 * (||sin(θ̂) - sin(θ)||² + ||cos(θ̂) - cos(θ)||²), mean over batch.
+    """
+    d_sin = torch.sin(pred) - torch.sin(label)
+    d_cos = torch.cos(pred) - torch.cos(label)
+    per_sample = 0.5 * (
+        d_sin.square().sum(dim=(-2, -1)) + d_cos.square().sum(dim=(-2, -1))
+    )
+    return torch.mean(per_sample)
 
 
 class HypersphericalVAELoss(nn.Module):
@@ -15,12 +74,20 @@ class HypersphericalVAELoss(nn.Module):
         use_vertex_supervision: bool = False,
         mhr_model_path: str | None = None,
         vertex_loss_weight: float = 1.0,
+        use_trig_euler_angle_loss: bool = False,
     ) -> None:
         super().__init__()
         self.use_6d_rotations = use_6d_rotation_format
         self.use_vertex_supervision = use_vertex_supervision
         self.vertex_loss_weight = vertex_loss_weight
+        self.use_trig_euler_angle_loss = use_trig_euler_angle_loss
         self.mhr_model = None
+
+        if use_trig_euler_angle_loss and use_6d_rotation_format:
+            raise ValueError(
+                "use_trig_euler_angle_loss=True applies only to Euler (3 angles per joint); "
+                "set use_6d_rotation_format=False."
+            )
 
         if self.use_vertex_supervision:
             if mhr_model_path is None:
@@ -39,18 +106,33 @@ class HypersphericalVAELoss(nn.Module):
         kl_weight: float,
         reconstructed_mhr_params: torch.Tensor | None = None,
         target_mhr_params: torch.Tensor | None = None,
+        vertex_loss_weight: float | None = None,
     ) -> dict[str, torch.Tensor]:
         if self.use_6d_rotations:
-            # Predicted joint angles should already be in 6d if this
-            # boolean has been set to true
-            label_joint_angles = euler_to_6d(label_joint_angles)
-
-        angle_rec_loss = torch.mean(
-            (predicted_joint_angles - label_joint_angles).square().sum(dim=-1)
-        )
+            label_joint_angles = _reshape_6d_joints(label_joint_angles)
+            predicted_joint_angles = _reshape_6d_joints(predicted_joint_angles)
+            angle_rec_loss = _angle_reconstruction_loss_mse(
+                predicted_joint_angles, label_joint_angles
+            )
+        else:
+            label_joint_angles = _reshape_euler_joints(label_joint_angles)
+            predicted_joint_angles = _reshape_euler_joints(predicted_joint_angles)
+            if self.use_trig_euler_angle_loss:
+                angle_rec_loss = _angle_reconstruction_loss_trig_euler(
+                    predicted_joint_angles, label_joint_angles
+                )
+            else:
+                angle_rec_loss = _angle_reconstruction_loss_mse(
+                    predicted_joint_angles, label_joint_angles
+                )
         kl_loss = self._compute_kl_divergence(latent_distributions)
         vertex_loss = torch.tensor(0.0, device=predicted_joint_angles.device)
 
+        vw = (
+            self.vertex_loss_weight
+            if vertex_loss_weight is None
+            else float(vertex_loss_weight)
+        )
         total_loss = angle_rec_loss + kl_weight * kl_loss
         if self.use_vertex_supervision:
             if reconstructed_mhr_params is None or target_mhr_params is None:
@@ -61,7 +143,7 @@ class HypersphericalVAELoss(nn.Module):
             vertex_loss = self._compute_vertex_loss(
                 reconstructed_mhr_params, target_mhr_params
             )
-            total_loss = total_loss + self.vertex_loss_weight * vertex_loss
+            total_loss = total_loss + vw * vertex_loss
 
         return {
             "angle_rec_loss": angle_rec_loss,
