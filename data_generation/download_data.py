@@ -7,7 +7,7 @@ DATA_PATH = CURRENT_DIR.parent / "data"
 POSES_PATH = DATA_PATH / "poses"
 
 DATASETS = {
-    "pinterest": "13p9yeGYTBOPlYe8fOBkv3v6wbYat7LQo",
+    "pinterest": "1DIg-3zQp5aPkxDQ1CgbqmTyJPCRhxSgp",
     "sports": "1orMqDftzDZdKybAvqST9IEQpwZ04OcaQ",
     "MPII": "1aS7qjZcTi2yjqshToLi4AL8fdhYX5g0x",
 }
