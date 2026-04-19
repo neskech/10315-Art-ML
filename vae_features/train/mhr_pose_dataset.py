@@ -10,6 +10,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
+from vae_features.utils.angleFormat import euler_to_6d
 from vae_features.utils.mhrToJointData import JointData, PostProcessor
 from vae_features.utils.skeletonFormat import SkeletonFormat
 
@@ -23,6 +24,18 @@ class PoseMetadata:
     pred_cam_t: torch.Tensor
     focal_length: torch.Tensor
     pred_keypoints_2d: dict[str, tuple[float, float]]
+
+
+def pose_image_abs_path(meta: PoseMetadata, data_root: Path | None) -> str | None:
+    """Absolute filesystem path to the pose image for thumbnails / OpenCV, if it exists."""
+    if meta.image_path_abs is not None:
+        p = Path(meta.image_path_abs)
+        if p.exists():
+            return str(p)
+    if data_root is None:
+        return None
+    fallback = Path(data_root) / "poses" / str(meta.image_path).lstrip("/")
+    return str(fallback) if fallback.exists() else None
 
 
 @dataclass
@@ -57,11 +70,13 @@ class MHRPoseDataset(Dataset):
         data_root: str | Path | None = None,
         max_samples: int | None = None,
         device: torch.device | None = None,
+        use_6d_rotations: bool = False,
     ):
         self.parquet_path = Path(parquet_path)
         self.data_root = Path(data_root) if data_root is not None else None
         self.skeleton_format = skeleton_format
         self.device = device if device is not None else torch.device("cpu")
+        self.use_6d_rotations = use_6d_rotations
         self.post_processor = PostProcessor(self.device)
 
         self.df = pd.read_parquet(self.parquet_path)
@@ -76,6 +91,59 @@ class MHRPoseDataset(Dataset):
             [source_idx_by_name[name] for name in target_joint_names], dtype=torch.long
         )
         self.inverse_reorder_indices = torch.argsort(self.reorder_indices)
+
+        self._image_key_to_index: dict[str, int] = {}
+        for i in range(len(self.df)):
+            key = self._canonical_image_key(str(self.df.iloc[i]["image_path"]))
+            self._image_key_to_index.setdefault(key, i)
+
+    def _canonical_image_key(self, path: str | Path) -> str:
+        """Normalize any path or parquet `image_path` value to a single lookup key."""
+        p = Path(path)
+        if self.data_root is not None:
+            poses_root = (self.data_root / "poses").resolve()
+            try:
+                if p.is_absolute():
+                    rel = p.resolve().relative_to(poses_root)
+                    return str(rel).replace("\\", "/")
+            except ValueError:
+                pass
+        s = str(path).replace("\\", "/").strip()
+        while s.startswith("./"):
+            s = s[2:]
+        for prefix in ("data/poses/", "poses/"):
+            if s.startswith(prefix):
+                s = s[len(prefix) :]
+                break
+        return s.lstrip("/")
+
+    def get_batch_by_image_paths(
+        self, image_paths: list[str]
+    ) -> tuple[MHRBatch | None, list[str]]:
+        """
+        Build a batch from parquet rows matching the given paths (any format: absolute,
+        or relative under poses/). Order matches ``image_paths``; missing rows are omitted.
+
+        Returns:
+            (collated batch, list of paths that had no matching parquet row)
+        """
+        if len(image_paths) == 0:
+            return None, []
+
+        items: list[dict[str, Any]] = []
+        missing: list[str] = []
+        for raw_path in image_paths:
+            key = self._canonical_image_key(raw_path)
+            idx = self._image_key_to_index.get(key)
+            if idx is None:
+                missing.append(raw_path)
+                continue
+            items.append(self.__getitem__(idx))
+
+        if len(items) == 0:
+            return None, missing
+
+        return self.collate_fn(items), missing
 
     def __len__(self) -> int:
         return len(self.df)
@@ -122,8 +190,13 @@ class MHRPoseDataset(Dataset):
         # PostProcessor currently returns a compressed joint angle tensor; recover full per-joint
         # angles directly from raw to get (B, 127, 3).
         full_joint_angles = _joint_angles_from_raw(joint_data.raw)
-        reordered_joint_angles = full_joint_angles[:, self.reorder_indices.to(self.device), :]
+        reordered_joint_angles = full_joint_angles[
+            :, self.reorder_indices.to(self.device), :
+        ]
+        if self.use_6d_rotations:
+            reordered_joint_angles = euler_to_6d(reordered_joint_angles)
 
+        # joint_angles: (B, J, 3) Euler XYZ, or (B, J, 6) 6D when use_6d_rotations is True.
         fixed_joint_data = JointData(
             raw=joint_data.raw,
             joint_angles=reordered_joint_angles,

@@ -11,12 +11,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+from vae_features.train.image_path_list import load_resolved_image_paths_from_json
 from vae_features.train.mhr_pose_dataset import MHRPoseDataset
 from vae_features.utils.skeletonFormat import SkeletonFormat
 
 _POSE_INTERPRETER = None
 _RENDERER_CLASS = None
-_FIXED_RECON_IMAGE_KEYS: set[str] | None = None
 
 
 def _to_numpy(x):
@@ -108,91 +108,104 @@ def _get_runtime(project_root: str | Path):
     return _POSE_INTERPRETER, _RENDERER_CLASS
 
 
+class ReconstructionImageList:
+    """JSON-driven list of pose image paths used for reconstruction triptychs."""
+
+    DEFAULT_JSON_PATH = Path(__file__).resolve().parent / "reconstruction_images.json"
+
+    def __init__(self, json_path: str | Path | None = None) -> None:
+        self.json_path = Path(json_path) if json_path is not None else self.DEFAULT_JSON_PATH
+
+    def get_image_paths(self, data_dir: str | Path) -> list[str]:
+        """Resolved absolute paths (in JSON order) that exist on disk."""
+        return load_resolved_image_paths_from_json(self.json_path, Path(data_dir))
+
+
+class ReconstructionVisualizer:
+    """Render original vs reconstructed MHR meshes for an ordered list of sample dicts."""
+
+    def save(
+        self,
+        samples: list[dict[str, Any]],
+        epoch: int,
+        output_dir: str | Path,
+        project_root: str | Path,
+        data_dir: str | Path,
+    ) -> list[str]:
+        if len(samples) == 0:
+            return []
+
+        pose_interpreter, renderer_class = _get_runtime(project_root=project_root)
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        faces_path = Path(project_root) / "visualization" / "faces.json"
+        with faces_path.open("r", encoding="utf-8") as f:
+            faces = np.array(json.load(f))
+
+        saved_paths: list[str] = []
+        for idx, sample in enumerate(samples, start=1):
+            img_path = _resolve_image_path(sample, data_dir=data_dir)
+            if img_path is None:
+                continue
+
+            original_image = cv2.imread(img_path)
+            if original_image is None:
+                continue
+
+            original_pose_data = pose_interpreter.interpret_pose_dictionary(
+                _build_pose_dictionary(sample, sample["original_mhr_parameters"])
+            )
+            reconstructed_pose_data = pose_interpreter.interpret_pose_dictionary(
+                _build_pose_dictionary(sample, sample["reconstructed_mhr_parameters"])
+            )
+
+            original_mhr_render = _render_mesh_overlay(
+                original_image,
+                original_pose_data,
+                renderer_class,
+                faces,
+            )
+            reconstructed_mhr_render = _render_mesh_overlay(
+                original_image,
+                reconstructed_pose_data,
+                renderer_class,
+                faces,
+            )
+
+            out_path = output_dir / f"epoch_{epoch + 1}_sample_{idx}.png"
+            _save_triptych_matplotlib(
+                original_image_bgr=original_image,
+                original_mhr_render_bgr=original_mhr_render,
+                reconstructed_mhr_render_bgr=reconstructed_mhr_render,
+                output_path=out_path,
+            )
+            saved_paths.append(str(out_path))
+
+        return saved_paths
+
+
 def save_reconstruction_visualizations(
     samples: list[dict[str, Any]],
     epoch: int,
     output_dir: str | Path,
     project_root: str | Path,
     data_dir: str | Path,
-    num_samples: int,
-    seed: int,
-    fixed_image_keys: set[str] | None = None,
+    image_list_json_path: str | Path | None = None,
 ) -> list[str]:
-    global _FIXED_RECON_IMAGE_KEYS
-
-    if fixed_image_keys is not None:
-        _FIXED_RECON_IMAGE_KEYS = fixed_image_keys
-
-    if len(samples) == 0:
-        return []
-
-    pose_interpreter, renderer_class = _get_runtime(project_root=project_root)
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    faces_path = Path(project_root) / "visualization" / "faces.json"
-    with faces_path.open("r", encoding="utf-8") as f:
-        faces = np.array(json.load(f))
-
-    valid_samples = []
-    for sample in samples:
-        img_path = _resolve_image_path(sample, data_dir=data_dir)
-        if img_path is None:
-            continue
-        sample = dict(sample)
-        sample["resolved_image_path"] = img_path
-        valid_samples.append(sample)
-
-    if len(valid_samples) == 0:
-        return []
-
-    if _FIXED_RECON_IMAGE_KEYS is None:
-        rng = np.random.default_rng(seed)
-        sample_size = min(num_samples, len(valid_samples))
-        candidate_keys = [s["resolved_image_path"] for s in valid_samples]
-        chosen_idx = rng.choice(len(candidate_keys), size=sample_size, replace=False)
-        _FIXED_RECON_IMAGE_KEYS = {candidate_keys[int(i)] for i in chosen_idx}
-
-    saved_paths: list[str] = []
-    selected = [s for s in valid_samples if s["resolved_image_path"] in _FIXED_RECON_IMAGE_KEYS]
-    selected = selected[:num_samples]
-
-    for idx, sample in enumerate(selected, start=1):
-        original_image = cv2.imread(sample["resolved_image_path"])
-        if original_image is None:
-            continue
-
-        original_pose_data = pose_interpreter.interpret_pose_dictionary(
-            _build_pose_dictionary(sample, sample["original_mhr_parameters"])
-        )
-        reconstructed_pose_data = pose_interpreter.interpret_pose_dictionary(
-            _build_pose_dictionary(sample, sample["reconstructed_mhr_parameters"])
-        )
-
-        original_mhr_render = _render_mesh_overlay(
-            original_image,
-            original_pose_data,
-            renderer_class,
-            faces,
-        )
-        reconstructed_mhr_render = _render_mesh_overlay(
-            original_image,
-            reconstructed_pose_data,
-            renderer_class,
-            faces,
-        )
-
-        out_path = output_dir / f"epoch_{epoch + 1}_sample_{idx}.png"
-        _save_triptych_matplotlib(
-            original_image_bgr=original_image,
-            original_mhr_render_bgr=original_mhr_render,
-            reconstructed_mhr_render_bgr=reconstructed_mhr_render,
-            output_path=out_path,
-        )
-        saved_paths.append(str(out_path))
-
-    return saved_paths
+    """
+    Backward-compatible wrapper: ``image_list_json_path`` is ignored; pass pre-filtered
+    ``samples`` from the training loop (see ``ReconstructionImageList`` + dataset batching).
+    """
+    _ = image_list_json_path
+    return ReconstructionVisualizer().save(
+        samples=samples,
+        epoch=epoch,
+        output_dir=output_dir,
+        project_root=project_root,
+        data_dir=data_dir,
+    )
 
 
 def main():
@@ -257,14 +270,12 @@ def main():
         "reconstructed_mhr_parameters": reconstructed_mhr_params[0],
     }
 
-    paths = save_reconstruction_visualizations(
+    paths = ReconstructionVisualizer().save(
         samples=[sample],
         epoch=0,
         output_dir=output_dir,
         project_root=project_root,
         data_dir=data_dir,
-        num_samples=1,
-        seed=42,
     )
     if len(paths) == 0:
         print("No reconstruction image was produced.")

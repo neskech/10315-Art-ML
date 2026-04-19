@@ -65,7 +65,7 @@ class PostProcessor:
         assert raw.shape[1] == NUM_JOINTS * 7
 
         batch_size = raw.shape[0]
-        rotations = raw[:, :3].unfold(1, 3, 7).reshape(batch_size, -1)
+        rotations = raw[:, 3:].unfold(1, 3, 7).reshape(batch_size, -1)
 
         root_translation = raw[:, ROOT_JOINT_IDX * 7 : ROOT_JOINT_IDX * 7 + 3]
         root_rotation = raw[:, ROOT_JOINT_IDX * 7 + 3 : ROOT_JOINT_IDX * 7 + 6]

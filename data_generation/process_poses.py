@@ -9,6 +9,7 @@ from pose_module.inference import SAM3DBodyInference
 
 CURRENT_DIR = Path(__file__).parent.resolve()
 DATA_PATH = CURRENT_DIR.parent / "data"
+PARQUET_PATH = DATA_PATH / "processed_poses2.parquet"
 
 
 def _predict_poses(
@@ -37,7 +38,7 @@ def _predict_poses(
             ):
                 print(f"{relative_path} has already been processed!")
                 continue
-            
+
             image_paths.append(os.path.join(root, file))
 
     if processing_limit != -1:
@@ -71,7 +72,7 @@ def _write_poses(
     processing_limit: int,
     overwrite: bool,
 ):
-    processed_data_path = os.path.join(data_path, "processed_poses.parquet")
+    processed_data_path = PARQUET_PATH
     if not overwrite and os.path.exists(processed_data_path):
         existingDataframe = pd.read_parquet(processed_data_path)
     else:
@@ -81,7 +82,7 @@ def _write_poses(
     new_dataframe = _predict_poses(
         poses_path, existingDataframe, batch_size, processing_limit, overwrite
     )
-    
+
     if overwrite:
         combined_dataframe = new_dataframe
     else:

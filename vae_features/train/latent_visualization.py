@@ -1,24 +1,42 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from PIL import Image
 from sklearn.decomposition import PCA
+import umap
 
-_FIXED_LATENT_IMAGE_KEYS: set[str] | None = None
+from vae_features.train.image_path_list import load_resolved_image_paths_from_json
 
 
-def _fit_reduce(latents: np.ndarray, method: str = "pca") -> np.ndarray:
+def _fit_reduce(latents: np.ndarray, method: str = "umap") -> np.ndarray:
     if latents.ndim != 2:
         raise ValueError(f"Expected 2D array for latents, got shape {latents.shape}")
     if latents.shape[0] < 2:
         raise ValueError("Need at least 2 samples for 2D projection")
 
-    if method.lower() == "pca":
+    m = method.lower()
+    if m == "umap":
+        n = latents.shape[0]
+        if n < 3:
+            raise ValueError(
+                "UMAP (cosine) latent projection requires at least 3 samples; "
+                f"got {n}. Add more images to latent_projection_images.json or use method='pca'."
+            )
+        n_neighbors = max(2, min(15, n - 1))
+        reducer = umap.UMAP(
+            n_components=2,
+            metric="cosine",
+            n_neighbors=n_neighbors,
+            min_dist=0.1,
+            random_state=42,
+        )
+        return reducer.fit_transform(latents)
+
+    if m == "pca":
         reducer = PCA(n_components=2)
         return reducer.fit_transform(latents)
 
@@ -30,7 +48,7 @@ def save_latent_projection_with_images(
     image_paths: list[str],
     output_path: str | Path,
     title: str,
-    method: str = "pca",
+    method: str = "umap",
     thumbnail_zoom: float = 0.14,
 ):
     if len(latents) != len(image_paths):
@@ -48,8 +66,12 @@ def save_latent_projection_with_images(
 
     fig, ax = plt.subplots(figsize=(16, 14))
     ax.set_title(title)
-    ax.set_xlabel("Component 1")
-    ax.set_ylabel("Component 2")
+    if method.lower() == "umap":
+        ax.set_xlabel("UMAP 1 (cosine)")
+        ax.set_ylabel("UMAP 2 (cosine)")
+    else:
+        ax.set_xlabel("Component 1")
+        ax.set_ylabel("Component 2")
 
     x_pad = (coords[:, 0].max() - coords[:, 0].min()) * 0.1 + 1e-4
     y_pad = (coords[:, 1].max() - coords[:, 1].min()) * 0.1 + 1e-4
@@ -75,75 +97,42 @@ def save_latent_projection_with_images(
     return str(output_path)
 
 
-def _resolve_image_path(meta: dict[str, Any], data_dir: str | Path) -> str | None:
-    image_path_abs = meta.get("image_path_abs")
-    if image_path_abs is not None:
-        abs_path = Path(image_path_abs)
-        if abs_path.exists():
-            return str(abs_path)
+class LatentProjectionImageList:
+    """JSON-driven list of pose image paths used for latent projection thumbnails."""
 
-    image_path = meta.get("image_path")
-    if image_path is not None:
-        rel_path = Path(image_path)
-        if rel_path.exists():
-            return str(rel_path)
+    DEFAULT_JSON_PATH = Path(__file__).resolve().parent / "latent_projection_images.json"
 
-        fallback = Path(data_dir) / "poses" / str(image_path).lstrip("/")
-        if fallback.exists():
-            return str(fallback)
+    def __init__(self, json_path: str | Path | None = None) -> None:
+        self.json_path = Path(json_path) if json_path is not None else self.DEFAULT_JSON_PATH
 
-    return None
+    def get_image_paths(self, data_dir: str | Path) -> list[str]:
+        """Resolved absolute paths (in JSON order) that exist on disk."""
+        return load_resolved_image_paths_from_json(self.json_path, Path(data_dir))
 
 
-def save_fixed_latent_projection_with_images(
-    embeddings: np.ndarray,
-    metadata: list[dict[str, Any]],
-    output_path: str | Path,
-    title: str,
-    num_samples: int,
-    seed: int,
-    data_dir: str | Path,
-    method: str = "pca",
-    thumbnail_zoom: float = 0.14,
-) -> str | None:
-    global _FIXED_LATENT_IMAGE_KEYS
+class LatentProjectionVisualizer:
+    """Save a 2D latent projection plot with image thumbnails for a pre-aligned batch."""
 
-    if len(embeddings) < 2:
-        return None
-
-    valid_samples: list[tuple[np.ndarray, str]] = []
-    for emb, meta in zip(embeddings, metadata, strict=False):
-        image_path = _resolve_image_path(meta, data_dir=data_dir)
-        if image_path is None:
-            continue
-        valid_samples.append((emb, image_path))
-
-    if len(valid_samples) < 2:
-        return None
-
-    if _FIXED_LATENT_IMAGE_KEYS is None:
-        rng = np.random.default_rng(seed)
-        sample_size = min(int(num_samples), len(valid_samples))
-        candidate_keys = [path for _, path in valid_samples]
-        chosen_idx = rng.choice(len(candidate_keys), size=sample_size, replace=False)
-        _FIXED_LATENT_IMAGE_KEYS = {candidate_keys[int(i)] for i in chosen_idx}
-
-    selected_latents: list[np.ndarray] = []
-    selected_image_paths: list[str] = []
-    for emb, image_path in valid_samples:
-        if image_path in _FIXED_LATENT_IMAGE_KEYS:
-            selected_latents.append(emb)
-            selected_image_paths.append(image_path)
-
-    if len(selected_latents) < 2:
-        return None
-
-    saved_path = save_latent_projection_with_images(
-        latents=np.array(selected_latents),
-        image_paths=selected_image_paths,
-        output_path=output_path,
-        title=title,
-        method=method,
-        thumbnail_zoom=thumbnail_zoom,
-    )
-    return saved_path
+    def save_projection(
+        self,
+        embeddings: np.ndarray,
+        image_paths: list[str],
+        output_path: str | Path,
+        title: str,
+        method: str = "umap",
+        thumbnail_zoom: float = 0.14,
+    ) -> str | None:
+        if len(embeddings) < 2:
+            return None
+        if len(embeddings) != len(image_paths):
+            raise ValueError(
+                f"embeddings and image_paths length mismatch: {len(embeddings)} vs {len(image_paths)}"
+            )
+        return save_latent_projection_with_images(
+            latents=embeddings,
+            image_paths=image_paths,
+            output_path=output_path,
+            title=title,
+            method=method,
+            thumbnail_zoom=thumbnail_zoom,
+        )
