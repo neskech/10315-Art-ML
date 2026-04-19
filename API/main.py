@@ -90,7 +90,8 @@ _PIP_PACKAGES = [
     "einops>=0.8",
     "fvcore>=0.1.5",
     "huggingface-hub>=0.24",
-    # SAM3D-related
+    # SAM3D-related (sam_3d_body/data/utils/io.py)
+    "braceexpand>=0.1.7",
     "yacs>=0.1.8",
     "loguru>=0.7",
     "dill>=0.3",
