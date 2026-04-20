@@ -5,8 +5,6 @@ Modal wrapper for SAM 3D Body 2D pose inference.
 from pathlib import Path
 import sys
 
-from pose_module.sam3d.tools.build_detector import HumanDetector
-
 
 # Allow imports from the sam3d repo to work
 current_dir = Path(__file__).resolve().parent
@@ -45,9 +43,6 @@ class SAM3DBodyInference:
         if use_torch_compile:
             print("Applying torch compile to model...")
             self.model = torch.compile(self.model, "max-autotune")
-
-        # Sam3 is better but bigger and slower, so we opt not to use it
-        self.human_detector = HumanDetector(name="vitdet", device=self.device)
 
         # Transform applied to each batch element
         self.target_image_size = self.model_cfg.MODEL.IMAGE_SIZE
@@ -98,7 +93,7 @@ class SAM3DBodyInference:
         batch_size = len(images)
 
         # Prepare batch
-        detector = self.human_detector if use_bbox_detector else None
+        detector = None
         input_batch = prepare_batch_correctly(
             images,
             self.transform_batch_element,
