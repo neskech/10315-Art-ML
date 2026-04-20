@@ -26,22 +26,25 @@ def _load_rgb_image(image_path: str):
     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
-def _image_delta(img_a: np.ndarray, img_b: np.ndarray) -> float:
-    if img_a.shape != img_b.shape:
-        img_b = cv2.resize(img_b, (img_a.shape[1], img_a.shape[0]))
-
-    diff = np.abs(img_a.astype(np.float32) - img_b.astype(np.float32))
-    return float(diff.mean() / 255.0)
+_DEDUPE_RESIZE = (256, 256)
 
 
-def _pose_squared_distance(pose_a, pose_b) -> float:
-    """Sum of squared differences of 3D keypoints (same notion as squaredDistanceMetric).
+def _to_dedupe_vector(img: np.ndarray) -> np.ndarray:
+    """Resize to a fixed canvas and return a flat float32 RGB vector in [0, 1]."""
+    resized = cv2.resize(img, _DEDUPE_RESIZE, interpolation=cv2.INTER_AREA)
+    return (resized.astype(np.float32) / 255.0).reshape(-1)
 
-    Runs on CPU so mixed GPU/CPU tensors from the dataset vs query do not break.
+
+def _image_l2_distance(img_a: np.ndarray, img_b: np.ndarray) -> float:
+    """L2 distance between two images, per-pixel-normalized so the threshold is
+    independent of image resolution.
+
+    Both images are resized to :data:`_DEDUPE_RESIZE` and mapped to [0, 1] RGB.
+    Returns ``sqrt(mean((a - b)**2))`` i.e. the RMS error over all pixels/channels.
     """
-    a = pose_a.pred_keypoints_3d.detach().cpu().reshape(-1).float()
-    b = pose_b.pred_keypoints_3d.detach().cpu().reshape(-1).float()
-    return float(((a - b) ** 2).sum().item())
+    a = _to_dedupe_vector(img_a)
+    b = _to_dedupe_vector(img_b)
+    return float(np.sqrt(np.mean((a - b) ** 2)))
 
 
 def _dedupe_results_by_image(
@@ -49,22 +52,22 @@ def _dedupe_results_by_image(
     epsilon: float,
     target_k: int,
     query_image: np.ndarray | None = None,
-    *,
-    sq_distance_threshold: float | None = None,
 ):
-    """Filter retrieval hits: path, then squared 3D-keypoint distance, then pixels.
+    """Drop near-duplicate images by per-pixel L2 distance on the raw RGB pixels.
 
-    Order of checks for each candidate (first failure drops the candidate):
-      1. Same ``relative_image_path`` as an already-kept result.
-      2. Squared keypoint distance below ``sq_distance_threshold`` vs any kept pose
-         (disabled when threshold is ``None`` or ``<= 0``).
-      3. Near-duplicate of the query image (mean normalized pixel delta).
-      4. Near-duplicate of a previously kept result image (same pixel test).
+    For each candidate, skip it if:
+      1. Its ``relative_image_path`` matches one we've already kept (cheap exact check).
+      2. Its L2 distance to the query image is below ``epsilon``.
+      3. Its L2 distance to any already-kept result image is below ``epsilon``.
+
+    ``epsilon`` is an RMS error in [0, 1] across all pixels/channels. For
+    typical photographs, visually identical pairs land around 0.02--0.04.
     """
     unique_results = []
     unique_images = []
     seen_paths: set[str] = set()
-    use_sq = sq_distance_threshold is not None and sq_distance_threshold > 0.0
+
+    query_vec = _to_dedupe_vector(query_image) if query_image is not None else None
 
     for res_pose in results:
         path_key = Path(res_pose.relative_image_path).as_posix()
@@ -76,24 +79,22 @@ def _dedupe_results_by_image(
         if res_img is None:
             continue
 
-        if use_sq and any(
-            _pose_squared_distance(res_pose, kept) < sq_distance_threshold
-            for kept in unique_results
-        ):
-            continue
+        res_vec = _to_dedupe_vector(res_img)
 
-        if query_image is not None and _image_delta(res_img, query_image) < epsilon:
-            continue
+        if query_vec is not None:
+            if float(np.sqrt(np.mean((res_vec - query_vec) ** 2))) < epsilon:
+                continue
 
         is_duplicate = any(
-            _image_delta(res_img, existing) < epsilon for existing in unique_images
+            float(np.sqrt(np.mean((res_vec - kept_vec) ** 2))) < epsilon
+            for kept_vec in unique_images
         )
         if is_duplicate:
             continue
 
         unique_results.append(res_pose)
         seen_paths.add(path_key)
-        unique_images.append(res_img)
+        unique_images.append(res_vec)
 
         if len(unique_results) >= target_k:
             break
@@ -168,17 +169,11 @@ def main():
     parser.add_argument(
         "--dedupe-epsilon",
         type=float,
-        default=0.01,
-        help="Two results are considered duplicate images if mean normalized pixel delta is below this threshold.",
-    )
-    parser.add_argument(
-        "--dedupe-sq-distance-threshold",
-        type=float,
-        default=1e-4,
+        default=0.05,
         help=(
-            "Also drop a candidate if sum of squared 3D keypoint differences to "
-            "any already-kept pose is below this (same family as squaredDistanceMetric). "
-            "Use 0 to disable pose-distance deduplication."
+            "Two results are considered duplicate images if their per-pixel L2 "
+            "(RMS over RGB in [0, 1]) is below this threshold. Both images are "
+            f"resized to {_DEDUPE_RESIZE[0]}x{_DEDUPE_RESIZE[1]} before comparison."
         ),
     )
     parser.add_argument(
@@ -196,8 +191,6 @@ def main():
         raise ValueError("overfetch-factor must be at least 1")
     if args.dedupe_epsilon < 0:
         raise ValueError("dedupe-epsilon must be non-negative")
-    if args.dedupe_sq_distance_threshold < 0:
-        raise ValueError("dedupe-sq-distance-threshold must be non-negative")
 
     if args.metric == "squared":
         selected_metric = squaredDistanceMetric
@@ -215,17 +208,11 @@ def main():
     if query_image is None:
         raise FileNotFoundError(f"Could not load query image at {args.image_path}")
 
-    sq_thr = (
-        None
-        if args.dedupe_sq_distance_threshold == 0
-        else args.dedupe_sq_distance_threshold
-    )
     results = _dedupe_results_by_image(
         overfetched_results,
         epsilon=args.dedupe_epsilon,
         target_k=args.k,
         query_image=query_image,
-        sq_distance_threshold=sq_thr,
     )
 
     if len(results) < args.k:
