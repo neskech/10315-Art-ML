@@ -26,11 +26,13 @@ environment variables that the wrapper sets before invoking ``modal``.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import logging
 import os
 import sys
+from collections import OrderedDict
 from pathlib import Path
 
 import modal
@@ -63,6 +65,7 @@ REMOTE_POSES_DIR = f"{REMOTE_VOLUME_MOUNT}/poses"
 VOLUME_NAME = os.environ.get("VAE_API_VOLUME_NAME", "vae-retrieval-data")
 APP_NAME = os.environ.get("VAE_API_APP_NAME", "vae-topk-retrieval")
 GPU_TYPE = os.environ.get("VAE_API_GPU", "T4")
+QUERY_CACHE_MAX_ENTRIES = int(os.environ.get("VAE_API_QUERY_CACHE_MAX", "1024"))
 
 # ---------------------------------------------------------------------------
 # Image construction
@@ -290,6 +293,14 @@ class VAERetrieval:
             self._dataset_latents.shape[1],
         )
 
+        # In-process LRU cache for query-image latents keyed by SHA-256 of bytes.
+        # SAM3D + VAE encode is the dominant per-request cost; caching pagination
+        # of the same image avoids re-running the full pipeline.
+        self._query_cache: "OrderedDict[str, torch.Tensor]" = OrderedDict()
+        self._query_cache_max = QUERY_CACHE_MAX_ENTRIES
+        self._query_cache_hits = 0
+        self._query_cache_misses = 0
+
     # ---- helpers ---------------------------------------------------------
 
     def _compute_dataset_latents(self):
@@ -364,6 +375,38 @@ class VAERetrieval:
         latent = latent / (latent.norm(dim=-1, keepdim=True) + 1e-8)
         return latent  # (1, D)
 
+    def _query_cache_get(self, key: str):
+        cached = self._query_cache.get(key)
+        if cached is None:
+            return None
+        self._query_cache.move_to_end(key)
+        return cached
+
+    def _query_cache_put(self, key: str, latent) -> None:
+        if self._query_cache_max <= 0:
+            return
+        self._query_cache[key] = latent
+        self._query_cache.move_to_end(key)
+        while len(self._query_cache) > self._query_cache_max:
+            self._query_cache.popitem(last=False)
+
+    def _get_or_compute_query_latent(
+        self, image_bytes: bytes, ignore_query_cache: bool
+    ):
+        """Return (latent, cache_hit). Skips/refreshes cache if ignore_query_cache."""
+        cache_key = hashlib.sha256(image_bytes).hexdigest()
+
+        if not ignore_query_cache:
+            cached = self._query_cache_get(cache_key)
+            if cached is not None:
+                self._query_cache_hits += 1
+                return cached, True
+
+        latent = self._embed_query_image(image_bytes)
+        self._query_cache_put(cache_key, latent)
+        self._query_cache_misses += 1
+        return latent, False
+
     def _retrieve(self, query_latent, offset: int, limit: int):
         """Top-(offset + limit) retrieval; return rows offset:offset+limit."""
         import torch
@@ -407,6 +450,7 @@ class VAERetrieval:
         offset: int = 0,
         limit: int = 10,
         include_images: bool = True,
+        ignore_query_cache: bool = False,
     ):
         """Top-K nearest pose retrieval against the precomputed VAE latents.
 
@@ -415,6 +459,9 @@ class VAERetrieval:
             offset:         number of top results to skip.
             limit:          number of results to return after the offset.
             include_images: if True, embed base64-encoded JPEGs for each result.
+            ignore_query_cache:
+                If True, recompute the query embedding from scratch and refresh
+                the cache entry instead of reusing a previously-cached latent.
         """
         from fastapi import HTTPException
         from fastapi.responses import JSONResponse
@@ -434,7 +481,9 @@ class VAERetrieval:
             raise HTTPException(status_code=400, detail="Empty image upload.")
 
         try:
-            query_latent = self._embed_query_image(image_bytes)
+            query_latent, cache_hit = self._get_or_compute_query_latent(
+                image_bytes, ignore_query_cache=ignore_query_cache
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
@@ -450,6 +499,11 @@ class VAERetrieval:
                 "total": int(self._dataset_latents.shape[0]),
                 "latent_dim": int(self._dataset_latents.shape[1]),
                 "results": results,
+                "query_cache": {
+                    "hit": cache_hit,
+                    "size": len(self._query_cache),
+                    "max": self._query_cache_max,
+                },
             }
         )
 
@@ -462,10 +516,13 @@ class VAERetrieval:
         offset: int = 0,
         limit: int = 10,
         include_images: bool = True,
+        ignore_query_cache: bool = False,
     ) -> dict:
         """Same as the HTTP endpoint, but invokable via ``.remote()`` from
         any Python client using the Modal SDK (no HTTP round-trip required)."""
-        query_latent = self._embed_query_image(image_bytes)
+        query_latent, cache_hit = self._get_or_compute_query_latent(
+            image_bytes, ignore_query_cache=ignore_query_cache
+        )
         results = self._retrieve(query_latent, offset=offset, limit=limit)
         if include_images:
             for r in results:
@@ -476,6 +533,11 @@ class VAERetrieval:
             "total": int(self._dataset_latents.shape[0]),
             "latent_dim": int(self._dataset_latents.shape[1]),
             "results": results,
+            "query_cache": {
+                "hit": cache_hit,
+                "size": len(self._query_cache),
+                "max": self._query_cache_max,
+            },
         }
 
 
@@ -490,6 +552,7 @@ def smoke_test(
     offset: int = 0,
     limit: int = 5,
     include_images: bool = False,
+    ignore_query_cache: bool = False,
 ):
     """Run a single retrieval request against a deployed/serving container.
 
@@ -504,6 +567,7 @@ def smoke_test(
         offset=offset,
         limit=limit,
         include_images=include_images,
+        ignore_query_cache=ignore_query_cache,
     )
     # Drop big base64 blobs from the printout
     for r in result.get("results", []):

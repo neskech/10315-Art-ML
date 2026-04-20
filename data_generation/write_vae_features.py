@@ -18,7 +18,7 @@ CHECKPOINTS_PATH = PROJECT_ROOT / "checkpoints"
 TRAIN_DIR = PROJECT_ROOT / "vae_features" / "train"
 SKELETON_JSON_PATH = TRAIN_DIR / "mhr_skeleton_format.json"
 JOINT_NAMES_JSON_PATH = TRAIN_DIR / "joint_names.json"
-POSES_PARQUET_PATH = DATA_PATH / "processed_poses.parquet"
+POSES_PARQUET_PATH = DATA_PATH / "processed_poses2.parquet"
 
 
 def _load_model_from_checkpoint(checkpoint_path: Path, device: torch.device):

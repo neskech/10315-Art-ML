@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent  # adjust if you place script elsewhere
-JSON_PATH = PROJECT_ROOT / "vae_features" / "train" / "latent_projection_images.json"
+JSON_PATH = PROJECT_ROOT / "vae_features" / "train" / "reconstruction_images.json"
 POSES_ROOT = PROJECT_ROOT / "data" / "poses"
 DOWNLOADED_PINS_ROOT = POSES_ROOT / "downloaded_pins"
 PINTEREST_ROOT = POSES_ROOT / "pinterest"

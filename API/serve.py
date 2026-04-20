@@ -187,6 +187,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     ]
     if args.include_images:
         extra.append("--include-images")
+    if args.ignore_query_cache:
+        extra.append("--ignore-query-cache")
     return _run_modal("run", args, extra)
 
 
@@ -246,6 +248,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-images",
         action="store_true",
         help="Include base64 image payloads in the response.",
+    )
+    p_run.add_argument(
+        "--ignore-query-cache",
+        action="store_true",
+        help="Bypass the query-image latent cache and recompute SAM3D + VAE.",
     )
     p_run.set_defaults(func=cmd_run)
 
