@@ -6,17 +6,24 @@ This module builds a Modal `App` whose container:
      checkpoints as image layers so cold starts only need to download the
      small, user-supplied artifacts.
   2. Mounts a Modal `Volume` containing the user-supplied artifacts:
-        - ``processed_poses.parquet``
-        - VAE checkpoint (``vae.pt``)
-        - The pose images directory (``poses/``)
+        - ``vae_features.parquet`` (columns: ``image_path``, ``vae_features``;
+          produced by ``data_generation/write_vae_features.py``; this is the
+          entire pose database represented purely as precomputed latents)
+        - VAE checkpoint (``vae.pt``) -- only used for encoding *query* images
+        - The pose images directory (``poses/``) -- only used for returning
+          base64 payloads in the response; not required for retrieval
      The volume is populated from the local machine via ``API/serve.py``.
   3. On container start (`@modal.enter`), loads the SAM3D pose estimator and
-     the trained VAE, then precomputes a (N, latent_dim) tensor of latent
-     embeddings for every row of the parquet so retrieval is a single GPU
-     matmul per request.
+     the trained VAE, then reads the precomputed (N, latent_dim) tensor of
+     dataset embeddings straight out of the parquet. No VAE re-encoding of
+     dataset rows happens server-side.
   4. Exposes a single POST endpoint that accepts a multipart image upload
      plus ``offset`` / ``limit`` query parameters and returns the matching
      pose images as base64-encoded JPEGs.
+
+The query-time pipeline is: SAM3D body inference -> MHR -> joint angles ->
+VAE encoder -> latent. Retrieval is then a single (N, D) @ (D, 1) matmul
+against the precomputed dataset latents.
 
 The path to the local parquet, VAE checkpoint and poses directory are passed
 as command-line arguments to ``API/serve.py``; this module reads them from
@@ -27,7 +34,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import io
 import json
 import logging
 import os
@@ -58,7 +64,7 @@ SOURCE_DIRS = ["pose_module", "vae_features", "topKRetrieval"]
 
 REMOTE_REPO = "/root/repo"
 REMOTE_VOLUME_MOUNT = "/vol"
-REMOTE_PARQUET = f"{REMOTE_VOLUME_MOUNT}/processed_poses.parquet"
+REMOTE_VAE_FEATURES = f"{REMOTE_VOLUME_MOUNT}/vae_features.parquet"
 REMOTE_VAE_CKPT = f"{REMOTE_VOLUME_MOUNT}/vae.pt"
 REMOTE_POSES_DIR = f"{REMOTE_VOLUME_MOUNT}/poses"
 
@@ -216,16 +222,18 @@ class VAERetrieval:
         if REMOTE_REPO not in sys.path:
             sys.path.insert(0, REMOTE_REPO)
 
+        import json as _json
+
+        import numpy as np
+        import pandas as pd
         import torch
 
         # Imports deferred to runtime so the local image-build process does
         # not need to import torch / sam3d / etc.
         from pose_module.inference import SAM3DBodyInference  # type: ignore
         from vae_features.model.feedForwardVae import FeedForwardVAE  # type: ignore
-        from vae_features.train.mhr_pose_dataset import (  # type: ignore
-            MHRPoseDataset,
-        )
         from vae_features.utils.feedForward import Norm  # type: ignore
+        from vae_features.utils.mhrToJointData import PostProcessor  # type: ignore
         from vae_features.utils.skeletonFormat import SkeletonFormat  # type: ignore
 
         logging.basicConfig(level=logging.INFO)
@@ -234,16 +242,20 @@ class VAERetrieval:
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._log.info("Using device: %s", self._device)
 
-        # Skeleton + dataset (drives MHR -> joint-angle conversion).
+        # ---- Config shared between query pipeline and dataset parquet ----
         train_dir = Path(REMOTE_REPO) / "vae_features" / "train"
         skeleton_format = SkeletonFormat.from_json_file(
             train_dir / "mhr_skeleton_format.json"
         )
 
-        if not Path(REMOTE_PARQUET).exists():
+        if not Path(REMOTE_VAE_FEATURES).exists():
             raise FileNotFoundError(
-                f"Parquet not found at {REMOTE_PARQUET}. Did you run "
-                f"`python API/serve.py upload --parquet-path ...`?"
+                f"VAE-features parquet not found at {REMOTE_VAE_FEATURES}. "
+                f"Run `python API/serve.py upload-artifacts --parquet-path "
+                f"data/vae_features_<checkpoint>.parquet ...` first. The "
+                f"parquet must be the output of "
+                f"`data_generation/write_vae_features.py` (columns: "
+                f"'image_path', 'vae_features')."
             )
         if not Path(REMOTE_VAE_CKPT).exists():
             raise FileNotFoundError(
@@ -251,32 +263,36 @@ class VAERetrieval:
                 f"`python API/serve.py upload --vae-checkpoint ...`?"
             )
 
-        # Load checkpoint config early so the dataset and VAE agree on rotation format.
+        # Load checkpoint config so the query-time encoder matches how the
+        # dataset parquet was produced (same rotation format, same encoder).
         self._log.info("Loading VAE checkpoint from %s", REMOTE_VAE_CKPT)
         ckpt = torch.load(REMOTE_VAE_CKPT, map_location=self._device, weights_only=False)
         config = ckpt.get("config", {})
         use_6d_rotations = bool(config.get("USE_6D_ROTATIONS", False))
         per_joint = 6 if use_6d_rotations else 3
 
-        self._dataset = MHRPoseDataset(
-            parquet_path=REMOTE_PARQUET,
-            skeleton_format=skeleton_format,
-            joint_names_path=train_dir / "joint_names.json",
-            data_root=REMOTE_VOLUME_MOUNT,  # so {data_root}/poses/<rel_path> resolves
-            max_samples=None,
+        # Query-time MHR -> joint-angle plumbing. Previously delegated to
+        # MHRPoseDataset; reproduced here directly so we don't need the
+        # pose-parameter columns in the parquet (we only have latents now).
+        self._post_processor = PostProcessor(self._device)
+        with (train_dir / "joint_names.json").open("r", encoding="utf-8") as f:
+            source_joint_names = _json.load(f)["joint_names"]
+        target_joint_names = skeleton_format.get_joint_names()
+        source_idx_by_name = {name: idx for idx, name in enumerate(source_joint_names)}
+        self._reorder_indices = torch.tensor(
+            [source_idx_by_name[name] for name in target_joint_names],
+            dtype=torch.long,
             device=self._device,
-            use_6d_rotations=use_6d_rotations,
         )
-        self._post_processor = self._dataset.post_processor
-        self._reorder_indices = self._dataset.reorder_indices.to(self._device)
         self._use_6d_rotations = use_6d_rotations
 
-        # Pose estimator (heavy: DiNOv3 + MHR head).
+        # ---- Pose estimator (heavy: DiNOv3 + MHR head) ----
         self._log.info("Loading SAM3D body inference model...")
         self._estimator = SAM3DBodyInference(
             device=self._device, use_torch_compile=False
         )
 
+        # ---- VAE encoder (only used on query images) ----
         encoder_sizes = config.get(
             "FF_ENCODER_SIZES",
             [skeleton_format.get_joint_count() * per_joint, 512, 256, 128],
@@ -300,11 +316,33 @@ class VAERetrieval:
         self._vae.load_state_dict(ckpt["model_state_dict"])
         self._vae.eval()
 
-        # Precompute parquet latents so each request is one matmul.
-        self._log.info("Precomputing VAE latents for %d parquet rows...", len(self._dataset))
-        self._dataset_latents, self._dataset_paths = self._compute_dataset_latents()
+        # ---- Dataset latents come straight from the parquet ----
+        # We deliberately do NOT re-run SAM3D or VAE encode on the dataset:
+        # that work was already done offline by
+        # data_generation/write_vae_features.py and serialized into the
+        # 'vae_features' column.
+        self._log.info("Reading precomputed latents from %s", REMOTE_VAE_FEATURES)
+        df = pd.read_parquet(REMOTE_VAE_FEATURES)
+        required = {"image_path", "vae_features"}
+        if not required.issubset(df.columns):
+            raise ValueError(
+                f"{REMOTE_VAE_FEATURES} is missing required columns. Need "
+                f"{sorted(required)}, got {list(df.columns)}. Did you upload "
+                f"the right parquet (output of "
+                f"data_generation/write_vae_features.py)?"
+            )
+
+        latents_np = np.stack(
+            [np.asarray(v, dtype=np.float32) for v in df["vae_features"].tolist()],
+            axis=0,
+        )
+        latents = torch.from_numpy(latents_np).to(self._device)
+        # Ensure unit vectors so cosine similarity reduces to a single matmul.
+        latents = latents / (latents.norm(dim=-1, keepdim=True) + 1e-8)
+        self._dataset_latents = latents
+        self._dataset_paths: list[str] = [str(p) for p in df["image_path"].tolist()]
         self._log.info(
-            "Cached %d latents of dim %d",
+            "Loaded %d precomputed latents of dim %d from parquet",
             self._dataset_latents.shape[0],
             self._dataset_latents.shape[1],
         )
@@ -318,41 +356,6 @@ class VAERetrieval:
         self._query_cache_misses = 0
 
     # ---- helpers ---------------------------------------------------------
-
-    def _compute_dataset_latents(self):
-        import torch
-        from torch.utils.data import DataLoader
-
-        loader = DataLoader(
-            self._dataset,
-            batch_size=64,
-            shuffle=False,
-            num_workers=0,
-            collate_fn=self._dataset.collate_fn,
-        )
-
-        latents: list = []
-        paths: list[str] = []
-        with torch.no_grad():
-            for batch in loader:
-                joint_angles = batch.joint_angles.to(self._device)
-                if torch.isnan(joint_angles).any():
-                    # Skip degenerate rows but keep alignment by still adding paths.
-                    flat = joint_angles.reshape(joint_angles.shape[0], -1)
-                    latent = torch.zeros(
-                        (flat.shape[0], self._vae.latent_size), device=self._device
-                    )
-                else:
-                    flat = joint_angles.reshape(joint_angles.shape[0], -1)
-                    _, latent, _ = self._vae.encode(flat)
-                latents.append(latent.detach())
-                paths.extend(meta.image_path for meta in batch.metadata)
-
-        latent_tensor = torch.cat(latents, dim=0)
-        latent_tensor = latent_tensor / (
-            latent_tensor.norm(dim=-1, keepdim=True) + 1e-8
-        )
-        return latent_tensor, paths
 
     def _embed_query_image(self, image_bytes: bytes):
         """Run SAM3D + VAE on a single uploaded image, return a unit latent (1, D)."""

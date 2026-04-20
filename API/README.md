@@ -3,6 +3,14 @@
 A [Modal](https://modal.com/docs) deployment that exposes nearest-neighbour
 pose retrieval over the VAE latent space as a single HTTP endpoint.
 
+## How it works
+
+The entire pose database is represented server-side as a single parquet of
+**precomputed** VAE latents (`image_path`, `vae_features` columns, produced
+offline by `data_generation/write_vae_features.py`). The server never
+re-runs SAM3D or the VAE encoder on dataset rows; it only runs them on the
+query image.
+
 Pipeline per request:
 
 1. The user POSTs an image (multipart upload).
@@ -10,8 +18,9 @@ Pipeline per request:
 3. The MHR parameters are converted to joint angles and encoded by the trained
    `FeedForwardVAE` (see `vae_features/model/feedForwardVae.py`) to produce a
    unit latent vector on the hypersphere.
-4. The query latent is compared (cosine similarity) against a precomputed
-   matrix of latents for every row in `data/processed_poses.parquet`.
+4. The query latent is compared (cosine similarity) against the precomputed
+   (N, D) latent matrix loaded at container start from
+   `vae_features_<checkpoint>.parquet`.
 5. The top `offset + limit` rows are selected, sliced to `[offset:offset+limit]`,
    and the corresponding pose images are returned as base64-encoded JPEGs.
 
@@ -26,6 +35,7 @@ hypersphere, the precomputed matmul gives true top-K retrieval. With
 API/
 ├── main.py     # Modal app: image, Volume mount, VAERetrieval class, /search endpoint
 ├── serve.py    # CLI wrapper: upload artifacts, modal serve / deploy / run
+├── test.py     # Local client that plots the results
 └── README.md
 ```
 
@@ -40,22 +50,32 @@ API/
 
 - A Modal account and `modal token new` already run on this machine.
 - The standard project artifacts present locally:
-    - `data/processed_poses.parquet`            (path is the required CLI arg)
-    - `data/poses/`                             (image folder referenced by the parquet)
-    - `vae_features/train/checkpoints/<vae>.pt` (trained `FeedForwardVAE` checkpoint)
+    - `data/vae_features_<checkpoint>.parquet`  (produced by
+      `data_generation/write_vae_features.py`; columns: `image_path`,
+      `vae_features`)
+    - `data/poses/`                             (image folder whose relative
+      paths match the parquet's `image_path` column; only needed if you want
+      the API to embed base64 images in the response)
+    - `checkpoints/<vae>.pt`                    (trained `FeedForwardVAE`
+      checkpoint — used to encode query images; must be the same VAE that
+      produced the parquet)
     - `checkpoints/sam3d/dinov3/model.ckpt`     (baked into the image)
     - `checkpoints/sam3d/dinov3/assets/mhr_model.pt` (baked into the image)
 
 ## 1. Upload data to a Modal Volume
 
-The parquet, VAE checkpoint and poses directory are pushed once to a Modal
-`Volume` (default name: `vae-retrieval-data`). The container mounts the volume
-at `/vol`.
+The VAE-features parquet, VAE checkpoint and poses directory are pushed once
+to a Modal `Volume` (default name: `vae-retrieval-data`). The container
+mounts the volume at `/vol`. Remote paths:
+
+- `/vol/vae_features.parquet` — precomputed latents
+- `/vol/vae.pt`               — VAE checkpoint (for encoding queries)
+- `/vol/poses/...`            — pose images (for base64 responses)
 
 ```bash
 python API/serve.py upload \
-    --parquet-path data/processed_poses.parquet \
-    --vae-checkpoint vae_features/train/checkpoints/mhr_vae_best.pt \
+    --parquet-path data/vae_features_mhr_vae_latest.parquet \
+    --vae-checkpoint checkpoints/mhr_vae_latest.pt \
     --poses-dir data/poses
 ```
 
@@ -64,8 +84,8 @@ If you only changed the parquet/checkpoint and want to skip re-uploading the
 
 ```bash
 python API/serve.py upload-artifacts \
-    --parquet-path /some/other/processed_poses.parquet \
-    --vae-checkpoint /some/other/vae.pt
+    --parquet-path data/vae_features_mhr_vae_latest.parquet \
+    --vae-checkpoint checkpoints/mhr_vae_latest.pt
 ```
 
 ## 2. Run the API
@@ -74,22 +94,23 @@ Live-reload, ephemeral URL (great for development):
 
 ```bash
 python API/serve.py serve \
-    --parquet-path data/processed_poses.parquet \
-    --vae-checkpoint vae_features/train/checkpoints/mhr_vae_best.pt
+    --parquet-path data/vae_features_mhr_vae_latest.parquet \
+    --vae-checkpoint checkpoints/mhr_vae_latest.pt
 ```
 
 Persistent deployment:
 
 ```bash
 python API/serve.py deploy \
-    --parquet-path data/processed_poses.parquet \
-    --vae-checkpoint vae_features/train/checkpoints/mhr_vae_best.pt
+    --parquet-path data/vae_features_mhr_vae_latest.parquet \
+    --vae-checkpoint checkpoints/mhr_vae_latest.pt
 ```
 
 The `--parquet-path`, `--vae-checkpoint` and `--poses-dir` flags are accepted
 by every subcommand so the same incantation works for `upload`, `serve`,
-`deploy` and `run`. They're forwarded to `API/main.py` via environment
-variables (`VAE_API_VOLUME_NAME`, `VAE_API_APP_NAME`, `VAE_API_GPU`).
+`deploy` and `run`. Note that `serve` / `deploy` / `run` do **not** upload
+anything — they only configure env vars for the Modal app. To push a new
+parquet or checkpoint you must run `upload` / `upload-artifacts` first.
 
 ## 3. Hit the endpoint
 
@@ -108,7 +129,7 @@ Response shape:
 {
   "offset": 0,
   "limit": 10,
-  "total": 3472,
+  "total": 29625,
   "latent_dim": 128,
   "results": [
     {
@@ -117,9 +138,13 @@ Response shape:
       "cosine_similarity": 0.987,
       "distance": 0.013,
       "image_base64": "iVBORw0KGgoAAAANSUhEUgAA..."
-    },
-    ...
-  ]
+    }
+  ],
+  "image_status": {
+    "missing_image_count": 0,
+    "missing_image_examples": [],
+    "volume_reloaded": false
+  }
 }
 ```
 
@@ -143,8 +168,8 @@ The endpoint internally computes `top(offset + limit)` and slices the
 
 ```bash
 python API/serve.py run \
-    --parquet-path data/processed_poses.parquet \
-    --vae-checkpoint vae_features/train/checkpoints/mhr_vae_best.pt \
+    --parquet-path data/vae_features_mhr_vae_latest.parquet \
+    --vae-checkpoint checkpoints/mhr_vae_latest.pt \
     --image data/query/sit.jpg --limit 5
 ```
 
@@ -153,6 +178,10 @@ result (with base64 payloads stripped for readability).
 
 ## Notes / gotchas
 
+- **Container startup is fast now.** Since the dataset latents are read
+  straight from the parquet, the `@modal.enter` lifecycle is
+  `read_parquet` + `torch.from_numpy` — no dataset iteration, no batched
+  VAE encode. Expect well under a second after the model weights are loaded.
 - The Modal image bakes the SAM3D + MHR weights as a layer (~2.6 GB) so cold
   starts only need to download the small VAE checkpoint and parquet from the
   volume.
@@ -163,3 +192,7 @@ result (with base64 payloads stripped for readability).
   `A100`) if you want faster cold starts / inference.
 - `min_containers=0` keeps idle cost at zero. Increase it (e.g. `min_containers=1`
   in `main.py`) for lower latency at the cost of a hot replica.
+- The VAE checkpoint you upload **must be the same checkpoint** that produced
+  the parquet — otherwise query latents and dataset latents live in different
+  spaces and similarities are meaningless. The parquet filename convention
+  (`vae_features_<checkpoint-stem>.parquet`) makes this explicit.

@@ -336,7 +336,7 @@ def main() -> None:
         for p in examples:
             print(f"  missing: {p}", file=sys.stderr)
         print(
-            "These files are referenced by processed_poses.parquet but not present "
+            "These files are referenced by vae_features.parquet but not present "
             "at /poses on the vae-retrieval-data volume. Upload the corresponding "
             "subdirectory with `modal volume put vae-retrieval-data <local> /poses/<remote>`.",
             file=sys.stderr,

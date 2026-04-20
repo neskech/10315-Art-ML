@@ -1,29 +1,34 @@
 """Command-line wrapper for the VAE retrieval Modal app.
 
+The server stores the entire pose database as *precomputed* VAE latents in a
+single parquet file (output of ``data_generation/write_vae_features.py``).
+SAM3D + VAE encoding only runs on the *query* image at request time.
+
 Usage examples
 --------------
 
-# 1) Upload the parquet, the trained VAE checkpoint and the poses image
-#    directory to the Modal Volume backing the API.
+# 1) Upload the precomputed VAE-features parquet, the trained VAE checkpoint
+#    (for encoding query images) and the poses image directory (for returning
+#    base64 payloads) to the Modal Volume backing the API.
 python API/serve.py upload \
-    --parquet-path data/processed_poses.parquet \
-    --vae-checkpoint vae_features/train/checkpoints/mhr_vae_best.pt \
+    --parquet-path data/vae_features_mhr_vae_latest.parquet \
+    --vae-checkpoint checkpoints/mhr_vae_latest.pt \
     --poses-dir data/poses
 
 # 2) Develop locally (live-reload, ephemeral URL)
 python API/serve.py serve \
-    --parquet-path data/processed_poses.parquet \
-    --vae-checkpoint vae_features/train/checkpoints/mhr_vae_best.pt
+    --parquet-path data/vae_features_mhr_vae_latest.parquet \
+    --vae-checkpoint checkpoints/mhr_vae_latest.pt
 
 # 3) Deploy to Modal (persistent URL)
 python API/serve.py deploy \
-    --parquet-path data/processed_poses.parquet \
-    --vae-checkpoint vae_features/train/checkpoints/mhr_vae_best.pt
+    --parquet-path data/vae_features_mhr_vae_latest.parquet \
+    --vae-checkpoint checkpoints/mhr_vae_latest.pt
 
 # 4) Smoke-test against a deployed/serving container
 python API/serve.py run \
-    --parquet-path data/processed_poses.parquet \
-    --vae-checkpoint vae_features/train/checkpoints/mhr_vae_best.pt \
+    --parquet-path data/vae_features_mhr_vae_latest.parquet \
+    --vae-checkpoint checkpoints/mhr_vae_latest.pt \
     --image data/query/sit.jpg --limit 5
 
 The ``--parquet-path``, ``--vae-checkpoint`` and ``--poses-dir`` flags exist on
@@ -43,10 +48,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MAIN_FILE = Path(__file__).resolve().parent / "main.py"
 
-DEFAULT_PARQUET = REPO_ROOT / "data" / "processed_poses.parquet"
-DEFAULT_VAE_CKPT = (
-    REPO_ROOT / "vae_features" / "train" / "checkpoints" / "mhr_vae_best.pt"
-)
+DEFAULT_PARQUET = REPO_ROOT / "data" / "vae_features_mhr_vae_latest.parquet"
+DEFAULT_VAE_CKPT = REPO_ROOT / "checkpoints" / "mhr_vae_latest.pt"
 DEFAULT_POSES_DIR = REPO_ROOT / "data" / "poses"
 DEFAULT_VOLUME_NAME = "vae-retrieval-data"
 DEFAULT_APP_NAME = "vae-topk-retrieval"
@@ -63,8 +66,9 @@ def _shared_args(parser: argparse.ArgumentParser) -> None:
         type=Path,
         default=DEFAULT_PARQUET,
         help=(
-            "Path to the local processed_poses.parquet file. "
-            "(Default: %(default)s)"
+            "Path to the local VAE-features parquet "
+            "(output of data_generation/write_vae_features.py; columns: "
+            "'image_path', 'vae_features'). (Default: %(default)s)"
         ),
     )
     parser.add_argument(
@@ -135,7 +139,7 @@ def cmd_upload(args: argparse.Namespace) -> None:
 
     print("Uploading artifacts (this may take a while for the poses dir)...")
     with vol.batch_upload(force=True) as batch:
-        batch.put_file(str(args.parquet_path), "/processed_poses.parquet")
+        batch.put_file(str(args.parquet_path), "/vae_features.parquet")
         batch.put_file(str(args.vae_checkpoint), "/vae.pt")
         batch.put_directory(str(args.poses_dir), "/poses")
 
@@ -153,7 +157,7 @@ def cmd_upload_artifacts_only(args: argparse.Namespace) -> None:
     vol = modal.Volume.from_name(args.volume_name, create_if_missing=True)
     print(f"Uploading parquet + VAE checkpoint to '{args.volume_name}'...")
     with vol.batch_upload(force=True) as batch:
-        batch.put_file(str(args.parquet_path), "/processed_poses.parquet")
+        batch.put_file(str(args.parquet_path), "/vae_features.parquet")
         batch.put_file(str(args.vae_checkpoint), "/vae.pt")
     print("Done.")
 
