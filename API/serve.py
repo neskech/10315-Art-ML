@@ -101,6 +101,25 @@ def _shared_args(parser: argparse.ArgumentParser) -> None:
         default=os.environ.get("VAE_API_GPU", "T4"),
         help="GPU type (e.g. T4, L4, A10G). (Default: %(default)s)",
     )
+    parser.add_argument(
+        "--min-containers",
+        type=int,
+        default=int(os.environ.get("VAE_API_MIN_CONTAINERS", "1")),
+        help=(
+            "Modal min_containers: keep this many GPU workers warm (0 = scale "
+            "to zero when idle; 1 avoids cold starts on most requests). "
+            "(Default: %(default)s)"
+        ),
+    )
+    parser.add_argument(
+        "--scaledown-window",
+        type=int,
+        default=int(os.environ.get("VAE_API_SCALEDOWN_WINDOW_SEC", "7200")),
+        help=(
+            "Seconds Modal waits after the last request before scaling an idle "
+            "container to zero. Larger = fewer cold starts. (Default: %(default)s)"
+        ),
+    )
 
 
 def _validate_paths(args: argparse.Namespace, *, require_poses: bool) -> None:
@@ -120,6 +139,8 @@ def _env_for_modal(args: argparse.Namespace) -> dict[str, str]:
     env["VAE_API_VOLUME_NAME"] = args.volume_name
     env["VAE_API_APP_NAME"] = args.app_name
     env["VAE_API_GPU"] = args.gpu
+    env["VAE_API_MIN_CONTAINERS"] = str(args.min_containers)
+    env["VAE_API_SCALEDOWN_WINDOW_SEC"] = str(args.scaledown_window)
     return env
 
 
