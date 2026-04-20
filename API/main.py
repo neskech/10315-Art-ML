@@ -460,6 +460,53 @@ class VAERetrieval:
         with abs_path.open("rb") as f:
             return base64.b64encode(f.read()).decode("ascii")
 
+    def _attach_result_images(self, results: list[dict]) -> dict:
+        """Try to load each result's image; refresh the volume once if any are missing.
+
+        Modal Volumes mounted into a container reflect volume state as of
+        container start. If you upload new pose images *after* the container
+        is warm, they won't be visible until the volume is reloaded. We do
+        that lazily: the first time we see a missing file in a request we
+        call ``volume.reload()`` and retry all missing entries.
+        """
+        missing_paths: list[str] = []
+        for r in results:
+            b64 = self._read_image_b64(r["image_path"])
+            r["image_base64"] = b64
+            if b64 is None:
+                missing_paths.append(r["image_path"])
+
+        reloaded = False
+        if missing_paths:
+            try:
+                volume.reload()
+                reloaded = True
+                still_missing: list[str] = []
+                for r in results:
+                    if r.get("image_base64") is not None:
+                        continue
+                    b64 = self._read_image_b64(r["image_path"])
+                    r["image_base64"] = b64
+                    if b64 is None:
+                        still_missing.append(r["image_path"])
+                missing_paths = still_missing
+            except Exception as exc:  # pragma: no cover - best-effort
+                self._log.warning("volume.reload() failed: %s", exc)
+
+        if missing_paths:
+            self._log.warning(
+                "Could not load %d result image(s) from the volume. "
+                "Example missing path: %r",
+                len(missing_paths),
+                missing_paths[0],
+            )
+
+        return {
+            "missing_image_count": len(missing_paths),
+            "missing_image_examples": missing_paths[:5],
+            "volume_reloaded": reloaded,
+        }
+
     # ---- HTTP endpoint ---------------------------------------------------
 
     @modal.fastapi_endpoint(method="POST", docs=True)
@@ -507,9 +554,9 @@ class VAERetrieval:
             raise HTTPException(status_code=422, detail=str(exc))
 
         results = self._retrieve(query_latent, offset=offset, limit=limit)
+        image_status: dict = {}
         if include_images:
-            for r in results:
-                r["image_base64"] = self._read_image_b64(r["image_path"])
+            image_status = self._attach_result_images(results)
 
         return JSONResponse(
             {
@@ -523,6 +570,7 @@ class VAERetrieval:
                     "size": len(self._query_cache),
                     "max": self._query_cache_max,
                 },
+                "image_status": image_status,
             }
         )
 
@@ -543,15 +591,16 @@ class VAERetrieval:
             image_bytes, ignore_query_cache=ignore_query_cache
         )
         results = self._retrieve(query_latent, offset=offset, limit=limit)
+        image_status: dict = {}
         if include_images:
-            for r in results:
-                r["image_base64"] = self._read_image_b64(r["image_path"])
+            image_status = self._attach_result_images(results)
         return {
             "offset": offset,
             "limit": limit,
             "total": int(self._dataset_latents.shape[0]),
             "latent_dim": int(self._dataset_latents.shape[1]),
             "results": results,
+            "image_status": image_status,
             "query_cache": {
                 "hit": cache_hit,
                 "size": len(self._query_cache),

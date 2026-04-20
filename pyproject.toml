@@ -59,10 +59,8 @@ power-spherical = { git = "https://github.com/nicola-decao/power_spherical.git" 
 
 [tool.uv]
 no-build-isolation-package = ["detectron2", "mmcv-lite"]
-
-[tool.uv.extra-build-dependencies]
-mmcv = ["setuptools<70.0.0", "wheel"]
-git = ["wheel"]
+# Note: `extra-build-dependencies` for mmcv/git lives in newer uv only; this
+# project's `setuptools<70` + `no-build-isolation-package` usually suffice.
 
 # [tool.uv.environment]
 # MMCV_WITH_OPS = "0"

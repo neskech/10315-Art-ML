@@ -27,9 +27,66 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+import platform
+
 import cv2
 import matplotlib
+
+
+def _pick_default_backend() -> str:
+    """Pick an interactive backend that works out of the box on this platform.
+
+    Homebrew Python on macOS often ships without tkinter, which makes the usual
+    ``TkAgg`` default crash with ``ModuleNotFoundError: No module named
+    '_tkinter'``. But macOS Python does ship the Cocoa-based ``macosx``
+    backend, so prefer that on Darwin and fall back to ``TkAgg`` elsewhere.
+    Agg is only used as a last resort (headless).
+    """
+    if os.environ.get("MPLBACKEND"):
+        return os.environ["MPLBACKEND"]
+
+    candidates: list[str] = []
+    if platform.system() == "Darwin":
+        candidates += ["macosx", "QtAgg", "TkAgg"]
+    else:
+        candidates += ["QtAgg", "TkAgg", "GTK4Agg", "GTK3Agg"]
+    candidates.append("Agg")
+
+    for name in candidates:
+        try:
+            matplotlib.use(name, force=True)
+            return name
+        except Exception:
+            continue
+    return matplotlib.get_backend()
+
+
+_SELECTED_BACKEND = _pick_default_backend()
+
 import numpy as np
+
+def _matplotlib_backend_is_interactive() -> bool:
+    """True if ``plt.show()`` can open a window without warnings (not Agg/svg/...)."""
+    import matplotlib.pyplot as plt
+
+    try:
+        from matplotlib.backends import backend_registry
+        import matplotlib.backends
+
+        current = plt.get_backend().lower()
+        interactive = {
+            b.lower()
+            for b in backend_registry.list_builtin(
+                matplotlib.backends.BackendFilter.INTERACTIVE
+            )
+        }
+        return current in interactive
+    except Exception:
+        from matplotlib import rcsetup
+
+        current = plt.get_backend().lower()
+        return current in {b.lower() for b in rcsetup.interactive_bk}
+
 
 _MATPLOTLIB_SAVE_SUFFIXES = frozenset(
     {
@@ -130,7 +187,6 @@ def render_results_matplotlib(
     save_path: Path | None = None,
 ) -> None:
     """Layout aligned with ``visualization/visualize_retrieval.render_results_table``."""
-    matplotlib.use(os.environ.get("MPLBACKEND", "TkAgg"))
     import matplotlib.pyplot as plt
 
     results = data.get("results") or []
@@ -202,7 +258,15 @@ def render_results_matplotlib(
         plt.savefig(resolved, bbox_inches="tight", dpi=150)
         print(f"Also saved figure to: {resolved.resolve()}")
 
-    plt.show()
+    if _matplotlib_backend_is_interactive():
+        plt.show()
+    elif save_path is None:
+        print(
+            "Headless matplotlib (e.g. Agg): no display. "
+            "Use --save out.png to write the figure, or MPLBACKEND=TkAgg if you have tkinter.",
+            file=sys.stderr,
+        )
+
     plt.close(fig)
 
 
@@ -259,6 +323,25 @@ def main() -> None:
         params["ignore_query_cache"] = True
 
     data = _request_json(url, args.image, params)
+
+    status = data.get("image_status") or {}
+    missing_count = int(status.get("missing_image_count") or 0)
+    if missing_count:
+        examples = status.get("missing_image_examples") or []
+        print(
+            f"Warning: {missing_count} result image(s) could not be loaded from "
+            f"the Modal volume (volume_reloaded={status.get('volume_reloaded')}).",
+            file=sys.stderr,
+        )
+        for p in examples:
+            print(f"  missing: {p}", file=sys.stderr)
+        print(
+            "These files are referenced by processed_poses.parquet but not present "
+            "at /poses on the vae-retrieval-data volume. Upload the corresponding "
+            "subdirectory with `modal volume put vae-retrieval-data <local> /poses/<remote>`.",
+            file=sys.stderr,
+        )
+
     render_results_matplotlib(data, args.image, save_path=args.save)
 
 
