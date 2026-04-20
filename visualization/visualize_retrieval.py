@@ -34,16 +34,52 @@ def _image_delta(img_a: np.ndarray, img_b: np.ndarray) -> float:
     return float(diff.mean() / 255.0)
 
 
+def _pose_squared_distance(pose_a, pose_b) -> float:
+    """Sum of squared differences of 3D keypoints (same notion as squaredDistanceMetric).
+
+    Runs on CPU so mixed GPU/CPU tensors from the dataset vs query do not break.
+    """
+    a = pose_a.pred_keypoints_3d.detach().cpu().reshape(-1).float()
+    b = pose_b.pred_keypoints_3d.detach().cpu().reshape(-1).float()
+    return float(((a - b) ** 2).sum().item())
+
+
 def _dedupe_results_by_image(
-    results, epsilon: float, target_k: int, query_image: np.ndarray | None = None
+    results,
+    epsilon: float,
+    target_k: int,
+    query_image: np.ndarray | None = None,
+    *,
+    sq_distance_threshold: float | None = None,
 ):
+    """Filter retrieval hits: path, then squared 3D-keypoint distance, then pixels.
+
+    Order of checks for each candidate (first failure drops the candidate):
+      1. Same ``relative_image_path`` as an already-kept result.
+      2. Squared keypoint distance below ``sq_distance_threshold`` vs any kept pose
+         (disabled when threshold is ``None`` or ``<= 0``).
+      3. Near-duplicate of the query image (mean normalized pixel delta).
+      4. Near-duplicate of a previously kept result image (same pixel test).
+    """
     unique_results = []
     unique_images = []
+    seen_paths: set[str] = set()
+    use_sq = sq_distance_threshold is not None and sq_distance_threshold > 0.0
 
     for res_pose in results:
+        path_key = Path(res_pose.relative_image_path).as_posix()
+        if path_key in seen_paths:
+            continue
+
         res_full_path = str(POSES_DIRECTORY / res_pose.relative_image_path)
         res_img = _load_rgb_image(res_full_path)
         if res_img is None:
+            continue
+
+        if use_sq and any(
+            _pose_squared_distance(res_pose, kept) < sq_distance_threshold
+            for kept in unique_results
+        ):
             continue
 
         if query_image is not None and _image_delta(res_img, query_image) < epsilon:
@@ -56,6 +92,7 @@ def _dedupe_results_by_image(
             continue
 
         unique_results.append(res_pose)
+        seen_paths.add(path_key)
         unique_images.append(res_img)
 
         if len(unique_results) >= target_k:
@@ -135,6 +172,16 @@ def main():
         help="Two results are considered duplicate images if mean normalized pixel delta is below this threshold.",
     )
     parser.add_argument(
+        "--dedupe-sq-distance-threshold",
+        type=float,
+        default=1e-4,
+        help=(
+            "Also drop a candidate if sum of squared 3D keypoint differences to "
+            "any already-kept pose is below this (same family as squaredDistanceMetric). "
+            "Use 0 to disable pose-distance deduplication."
+        ),
+    )
+    parser.add_argument(
         "--overfetch-factor",
         type=int,
         default=5,
@@ -149,6 +196,8 @@ def main():
         raise ValueError("overfetch-factor must be at least 1")
     if args.dedupe_epsilon < 0:
         raise ValueError("dedupe-epsilon must be non-negative")
+    if args.dedupe_sq_distance_threshold < 0:
+        raise ValueError("dedupe-sq-distance-threshold must be non-negative")
 
     if args.metric == "squared":
         selected_metric = squaredDistanceMetric
@@ -166,11 +215,17 @@ def main():
     if query_image is None:
         raise FileNotFoundError(f"Could not load query image at {args.image_path}")
 
+    sq_thr = (
+        None
+        if args.dedupe_sq_distance_threshold == 0
+        else args.dedupe_sq_distance_threshold
+    )
     results = _dedupe_results_by_image(
         overfetched_results,
         epsilon=args.dedupe_epsilon,
         target_k=args.k,
         query_image=query_image,
+        sq_distance_threshold=sq_thr,
     )
 
     if len(results) < args.k:
