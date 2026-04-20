@@ -26,25 +26,78 @@ def _load_rgb_image(image_path: str):
     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
-_DEDUPE_RESIZE = (256, 256)
+# Letterbox + multi-scale RMS; sizes chosen so crop vs full still overlap at coarse scales.
+_DEDUPE_SIZES: tuple[int, ...] = (32, 48, 64, 96, 128, 192, 256)
 
 
-def _to_dedupe_vector(img: np.ndarray) -> np.ndarray:
-    """Resize to a fixed canvas and return a flat float32 RGB vector in [0, 1]."""
-    resized = cv2.resize(img, _DEDUPE_RESIZE, interpolation=cv2.INTER_AREA)
-    return (resized.astype(np.float32) / 255.0).reshape(-1)
+def _letterbox_square_rgb(img: np.ndarray, size: int) -> np.ndarray:
+    """Fit ``img`` inside ``size``×``size`` with aspect ratio preserved; pad with black."""
+    h, w = img.shape[:2]
+    if h == 0 or w == 0:
+        return np.zeros((size, size, 3), dtype=np.uint8)
+    scale = min(size / h, size / w)
+    nh, nw = max(1, int(round(h * scale))), max(1, int(round(w * scale)))
+    resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
+    canvas = np.zeros((size, size, 3), dtype=np.uint8)
+    y0 = (size - nh) // 2
+    x0 = (size - nw) // 2
+    canvas[y0 : y0 + nh, x0 : x0 + nw] = resized
+    return canvas
 
 
-def _image_l2_distance(img_a: np.ndarray, img_b: np.ndarray) -> float:
-    """L2 distance between two images, per-pixel-normalized so the threshold is
-    independent of image resolution.
-
-    Both images are resized to :data:`_DEDUPE_RESIZE` and mapped to [0, 1] RGB.
-    Returns ``sqrt(mean((a - b)**2))`` i.e. the RMS error over all pixels/channels.
-    """
-    a = _to_dedupe_vector(img_a)
-    b = _to_dedupe_vector(img_b)
+def _rms_l2_letterboxed_rgb(img_a: np.ndarray, img_b: np.ndarray, size: int) -> float:
+    """RMS L2 in [0,1] after letterboxing both to ``size``×``size``."""
+    a = _letterbox_square_rgb(img_a, size).astype(np.float32) / 255.0
+    b = _letterbox_square_rgb(img_b, size).astype(np.float32) / 255.0
     return float(np.sqrt(np.mean((a - b) ** 2)))
+
+
+def _min_rms_multiscale(img_a: np.ndarray, img_b: np.ndarray) -> float:
+    """Minimum RMS across scales; helps when one image is a crop / different resolution."""
+    return min(_rms_l2_letterboxed_rgb(img_a, img_b, s) for s in _DEDUPE_SIZES)
+
+
+def _max_ncc_if_crop(img_a: np.ndarray, img_b: np.ndarray) -> float:
+    """If one image is a spatial crop of the other, return max TM_CCOEFF_NORMED score.
+
+    Otherwise (same size, unrelated) returns a low value. Capped resolution for speed.
+    """
+    ha, wa = img_a.shape[:2]
+    hb, wb = img_b.shape[:2]
+    if ha * wa == 0 or hb * wb == 0:
+        return 0.0
+    # Smaller image = template
+    if ha * wa > hb * wb:
+        img_a, img_b = img_b, img_a
+        ha, wa, hb, wb = hb, wb, ha, wa
+    gray_a = cv2.cvtColor(img_a, cv2.COLOR_RGB2GRAY)
+    gray_b = cv2.cvtColor(img_b, cv2.COLOR_RGB2GRAY)
+    max_side = 640
+    if max(hb, wb) > max_side:
+        scale = max_side / max(hb, wb)
+        gray_b = cv2.resize(gray_b, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        gray_a = cv2.resize(gray_a, (max(1, int(wa * scale)), max(1, int(ha * scale))), interpolation=cv2.INTER_AREA)
+    if gray_a.shape[0] < 3 or gray_a.shape[1] < 3:
+        return 0.0
+    if gray_a.shape[0] > gray_b.shape[0] or gray_a.shape[1] > gray_b.shape[1]:
+        return 0.0
+    res = cv2.matchTemplate(gray_b, gray_a, cv2.TM_CCOEFF_NORMED)
+    return float(res.max()) if res.size else 0.0
+
+
+def _pair_is_duplicate(
+    img_a: np.ndarray,
+    img_b: np.ndarray,
+    *,
+    epsilon: float,
+    ncc_threshold: float,
+) -> bool:
+    """Duplicate if multiscale min-RMS is low OR NCC suggests crop/subregion match."""
+    if _min_rms_multiscale(img_a, img_b) < epsilon:
+        return True
+    if ncc_threshold > 0.0 and _max_ncc_if_crop(img_a, img_b) >= ncc_threshold:
+        return True
+    return False
 
 
 def _dedupe_results_by_image(
@@ -52,22 +105,18 @@ def _dedupe_results_by_image(
     epsilon: float,
     target_k: int,
     query_image: np.ndarray | None = None,
+    *,
+    ncc_threshold: float = 0.88,
 ):
-    """Drop near-duplicate images by per-pixel L2 distance on the raw RGB pixels.
+    """Drop near-duplicates using letterboxed multiscale L2 + optional crop (NCC) match.
 
-    For each candidate, skip it if:
-      1. Its ``relative_image_path`` matches one we've already kept (cheap exact check).
-      2. Its L2 distance to the query image is below ``epsilon``.
-      3. Its L2 distance to any already-kept result image is below ``epsilon``.
-
-    ``epsilon`` is an RMS error in [0, 1] across all pixels/channels. For
-    typical photographs, visually identical pairs land around 0.02--0.04.
+    Stretch-only resize fails when one image is a crop of another with different
+    aspect ratio or resolution; letterboxing + min RMS over scales aligns that.
+    Template matching catches ``small image ≈ patch of large image`` pairs.
     """
-    unique_results = []
-    unique_images = []
+    unique_results: list = []
+    unique_images: list[np.ndarray] = []
     seen_paths: set[str] = set()
-
-    query_vec = _to_dedupe_vector(query_image) if query_image is not None else None
 
     for res_pose in results:
         path_key = Path(res_pose.relative_image_path).as_posix()
@@ -79,22 +128,20 @@ def _dedupe_results_by_image(
         if res_img is None:
             continue
 
-        res_vec = _to_dedupe_vector(res_img)
+        if query_image is not None and _pair_is_duplicate(
+            query_image, res_img, epsilon=epsilon, ncc_threshold=ncc_threshold
+        ):
+            continue
 
-        if query_vec is not None:
-            if float(np.sqrt(np.mean((res_vec - query_vec) ** 2))) < epsilon:
-                continue
-
-        is_duplicate = any(
-            float(np.sqrt(np.mean((res_vec - kept_vec) ** 2))) < epsilon
-            for kept_vec in unique_images
-        )
-        if is_duplicate:
+        if any(
+            _pair_is_duplicate(kept, res_img, epsilon=epsilon, ncc_threshold=ncc_threshold)
+            for kept in unique_images
+        ):
             continue
 
         unique_results.append(res_pose)
         seen_paths.add(path_key)
-        unique_images.append(res_vec)
+        unique_images.append(res_img)
 
         if len(unique_results) >= target_k:
             break
@@ -171,9 +218,18 @@ def main():
         type=float,
         default=0.05,
         help=(
-            "Two results are considered duplicate images if their per-pixel L2 "
-            "(RMS over RGB in [0, 1]) is below this threshold. Both images are "
-            f"resized to {_DEDUPE_RESIZE[0]}x{_DEDUPE_RESIZE[1]} before comparison."
+            "Min multiscale RMS L2 (letterboxed RGB in [0,1]) below this ⇒ duplicate. "
+            f"Scales: {list(_DEDUPE_SIZES)}."
+        ),
+    )
+    parser.add_argument(
+        "--dedupe-ncc-threshold",
+        type=float,
+        default=0.88,
+        help=(
+            "If > 0, also treat a pair as duplicate when OpenCV matchTemplate NCC "
+            "(smaller image vs larger) reaches this—catches crop vs full image. "
+            "Use 0 to disable."
         ),
     )
     parser.add_argument(
@@ -191,6 +247,8 @@ def main():
         raise ValueError("overfetch-factor must be at least 1")
     if args.dedupe_epsilon < 0:
         raise ValueError("dedupe-epsilon must be non-negative")
+    if args.dedupe_ncc_threshold < 0 or args.dedupe_ncc_threshold > 1:
+        raise ValueError("dedupe-ncc-threshold must be in [0, 1]")
 
     if args.metric == "squared":
         selected_metric = squaredDistanceMetric
@@ -213,6 +271,7 @@ def main():
         epsilon=args.dedupe_epsilon,
         target_k=args.k,
         query_image=query_image,
+        ncc_threshold=args.dedupe_ncc_threshold,
     )
 
     if len(results) < args.k:
