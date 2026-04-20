@@ -75,7 +75,9 @@ QUERY_CACHE_MAX_ENTRIES = int(os.environ.get("VAE_API_QUERY_CACHE_MAX", "1024"))
 # Keep ≥1 warm replica by default so SAM3D/ViTDet load once; use 0 for min idle cost.
 MIN_CONTAINERS = max(0, int(os.environ.get("VAE_API_MIN_CONTAINERS", "1")))
 # Seconds before Modal scales an idle container to zero (longer = fewer cold starts).
-SCALEDOWN_WINDOW_SEC = max(1, int(os.environ.get("VAE_API_SCALEDOWN_WINDOW_SEC", "7200")))
+# Modal caps this at 3600s (1h).
+_SCALEDOWN_RAW = int(os.environ.get("VAE_API_SCALEDOWN_WINDOW_SEC", "3600"))
+SCALEDOWN_WINDOW_SEC = min(3600, max(1, _SCALEDOWN_RAW))
 
 # ---------------------------------------------------------------------------
 # Image construction

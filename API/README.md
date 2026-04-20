@@ -190,9 +190,10 @@ result (with base64 payloads stripped for readability).
   so no detection actually runs — just like `topKRetrieval/topKRetrieval.py`.
 - The container default GPU is `T4`. Override with `--gpu L4` (or `A10G`,
   `A100`) if you want faster cold starts / inference.
-- **Warm replicas:** defaults are `min_containers=1` and `scaledown_window=7200`
-  (2 hours), so one GPU worker stays up and idle workers are not torn down
-  immediately — this avoids re-running SAM3D + ViTDet init on every cold start.
+- **Warm replicas:** defaults are `min_containers=1` and `scaledown_window=3600`
+  (1 hour, Modal’s maximum), so one GPU worker stays up and idle workers are
+  not torn down immediately — this avoids re-running SAM3D + ViTDet init on
+  every cold start.
   For dev cost savings use `--min-containers 0` (and optionally a shorter
   `--scaledown-window`). You can also set `VAE_API_MIN_CONTAINERS` and
   `VAE_API_SCALEDOWN_WINDOW_SEC` in the environment.

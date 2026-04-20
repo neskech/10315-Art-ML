@@ -54,6 +54,19 @@ DEFAULT_POSES_DIR = REPO_ROOT / "data" / "poses"
 DEFAULT_VOLUME_NAME = "vae-retrieval-data"
 DEFAULT_APP_NAME = "vae-topk-retrieval"
 
+# Modal caps scaledown_window at 3600 seconds.
+_MAX_SCALEDOWN_WINDOW = 3600
+
+
+def _scaledown_window_default() -> int:
+    raw = int(os.environ.get("VAE_API_SCALEDOWN_WINDOW_SEC", str(_MAX_SCALEDOWN_WINDOW)))
+    return min(_MAX_SCALEDOWN_WINDOW, max(1, raw))
+
+
+def _parse_scaledown_window(s: str) -> int:
+    v = int(s)
+    return min(_MAX_SCALEDOWN_WINDOW, max(1, v))
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -113,11 +126,12 @@ def _shared_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--scaledown-window",
-        type=int,
-        default=int(os.environ.get("VAE_API_SCALEDOWN_WINDOW_SEC", "7200")),
+        type=_parse_scaledown_window,
+        default=_scaledown_window_default(),
         help=(
             "Seconds Modal waits after the last request before scaling an idle "
-            "container to zero. Larger = fewer cold starts. (Default: %(default)s)"
+            f"container to zero (max {_MAX_SCALEDOWN_WINDOW}). Larger = fewer "
+            "cold starts. (Default: %(default)s)"
         ),
     )
 
