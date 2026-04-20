@@ -93,10 +93,12 @@ _PIP_PACKAGES = [
     "einops>=0.8",
     "fvcore>=0.1.5",
     "huggingface-hub>=0.24",
-    # SAM3D-related
+    # SAM3D-related (sam_3d_body/data/utils/io.py)
+    "braceexpand>=0.1.7",
     "yacs>=0.1.8",
     "loguru>=0.7",
     "dill>=0.3",
+    "cloudpickle>=3.0",  # detectron2 lazy config; omitted when d2 is pip-installed with --no-deps
     "appdirs>=1.4",
     "networkx==3.2.1",
     "roma>=1.5",
@@ -186,13 +188,21 @@ image = (
 app = modal.App(APP_NAME)
 volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 
+# `fastapi` is only installed inside the Modal image, not locally. Using
+# `image.imports()` makes these names importable at module scope when the
+# code actually runs inside the container (where FastAPI resolves the
+# `UploadFile` annotation via `typing.get_type_hints`), while skipping the
+# import during the local app-definition pass Modal runs before deploying.
+with image.imports():
+    from fastapi import UploadFile
+
 
 @app.cls(
     image=image,
     gpu=GPU_TYPE,
     volumes={REMOTE_VOLUME_MOUNT: volume},
     timeout=600,
-    scaledown_window=300,
+    scaledown_window=3600,
     min_containers=0,
 )
 class VAERetrieval:
@@ -235,6 +245,18 @@ class VAERetrieval:
                 f"Parquet not found at {REMOTE_PARQUET}. Did you run "
                 f"`python API/serve.py upload --parquet-path ...`?"
             )
+        if not Path(REMOTE_VAE_CKPT).exists():
+            raise FileNotFoundError(
+                f"VAE checkpoint not found at {REMOTE_VAE_CKPT}. Did you run "
+                f"`python API/serve.py upload --vae-checkpoint ...`?"
+            )
+
+        # Load checkpoint config early so the dataset and VAE agree on rotation format.
+        self._log.info("Loading VAE checkpoint from %s", REMOTE_VAE_CKPT)
+        ckpt = torch.load(REMOTE_VAE_CKPT, map_location=self._device, weights_only=False)
+        config = ckpt.get("config", {})
+        use_6d_rotations = bool(config.get("USE_6D_ROTATIONS", False))
+        per_joint = 6 if use_6d_rotations else 3
 
         self._dataset = MHRPoseDataset(
             parquet_path=REMOTE_PARQUET,
@@ -243,9 +265,11 @@ class VAERetrieval:
             data_root=REMOTE_VOLUME_MOUNT,  # so {data_root}/poses/<rel_path> resolves
             max_samples=None,
             device=self._device,
+            use_6d_rotations=use_6d_rotations,
         )
         self._post_processor = self._dataset.post_processor
         self._reorder_indices = self._dataset.reorder_indices.to(self._device)
+        self._use_6d_rotations = use_6d_rotations
 
         # Pose estimator (heavy: DiNOv3 + MHR head).
         self._log.info("Loading SAM3D body inference model...")
@@ -253,19 +277,9 @@ class VAERetrieval:
             device=self._device, use_torch_compile=False
         )
 
-        # VAE: rebuild architecture, load weights from user-supplied checkpoint.
-        if not Path(REMOTE_VAE_CKPT).exists():
-            raise FileNotFoundError(
-                f"VAE checkpoint not found at {REMOTE_VAE_CKPT}. Did you run "
-                f"`python API/serve.py upload --vae-checkpoint ...`?"
-            )
-
-        self._log.info("Loading VAE checkpoint from %s", REMOTE_VAE_CKPT)
-        ckpt = torch.load(REMOTE_VAE_CKPT, map_location=self._device, weights_only=False)
-        config = ckpt.get("config", {})
         encoder_sizes = config.get(
             "FF_ENCODER_SIZES",
-            [skeleton_format.get_joint_count() * 3, 512, 256, 128],
+            [skeleton_format.get_joint_count() * per_joint, 512, 256, 128],
         )
         normalization: Norm = (
             "layerNorm"
@@ -280,6 +294,8 @@ class VAERetrieval:
             activation=torch.nn.GELU(),
             normalization=normalization,
             device=self._device,
+            use_6d_rotation_format=use_6d_rotations,
+            initial_concentration=float(config.get("INITIAL_CONCENTRATION", 1.0)),
         ).to(self._device)
         self._vae.load_state_dict(ckpt["model_state_dict"])
         self._vae.eval()
@@ -347,6 +363,7 @@ class VAERetrieval:
         from vae_features.train.mhr_pose_dataset import (  # type: ignore
             _joint_angles_from_raw,
         )
+        from vae_features.utils.angleFormat import euler_to_6d  # type: ignore
 
         nparr = np.frombuffer(image_bytes, np.uint8)
         bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -368,6 +385,8 @@ class VAERetrieval:
         )
         full_joint_angles = _joint_angles_from_raw(joint_data.raw)  # (1, J, 3)
         reordered = full_joint_angles[:, self._reorder_indices, :]
+        if self._use_6d_rotations:
+            reordered = euler_to_6d(reordered)
         flat = reordered.reshape(1, -1)
 
         with torch.no_grad():
@@ -446,7 +465,7 @@ class VAERetrieval:
     @modal.fastapi_endpoint(method="POST", docs=True)
     async def search(
         self,
-        file: "UploadFile",  # type: ignore[name-defined]  # noqa: F821
+        file: UploadFile,
         offset: int = 0,
         limit: int = 10,
         include_images: bool = True,
