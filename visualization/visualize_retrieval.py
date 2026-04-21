@@ -1,4 +1,7 @@
 import argparse
+import os
+import subprocess
+import sys
 import cv2
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -7,10 +10,15 @@ import numpy as np
 from topKRetrieval.topKRetrieval import runTopKRetrieval
 from topKRetrieval.squaredDistanceRetrieval import squaredDistanceMetric
 from topKRetrieval.classificationFeatureRetrieval import getClassificationFeatureMetric
+from topKRetrieval.pcaFeatureRetrieval import getPCAFeatureMetric
 from topKRetrieval.vaeFeatureRetrieval import getVAEFeatureMetric
 
 CURRENT_DIRECTORY = Path(__file__).parent.resolve()
-POSES_DIRECTORY = CURRENT_DIRECTORY.parent / "data" / "poses"
+REPO_ROOT = CURRENT_DIRECTORY.parent
+POSES_DIRECTORY = REPO_ROOT / "data" / "poses"
+DEFAULT_POSES_PARQUET = REPO_ROOT / "data" / "processed_poses.parquet"
+WRITE_VAE_FEATURES_SCRIPT = REPO_ROOT / "data_generation" / "write_vae_features.py"
+WRITE_PCA_FEATURES_SCRIPT = REPO_ROOT / "data_generation" / "write_pca_features.py"
 
 
 def _data_relative_pose_image_path(relative_image_path: str) -> str:
@@ -205,13 +213,60 @@ def main():
         "--metric",
         type=str,
         default="squared",
-        choices=["squared", "classification", "vae"],
+        choices=["squared", "classification", "vae", "pca"],
     )
     parser.add_argument(
         "--vae-checkpoint",
         type=str,
         default="mhr_vae_best.pt",
         help="Checkpoint filename under checkpoints/ used for VAE retrieval features.",
+    )
+    parser.add_argument(
+        "--regenerate-vae-features",
+        action="store_true",
+        help=(
+            "Before retrieval, run data_generation/write_vae_features.py for "
+            "--vae-checkpoint over data/processed_poses.parquet, writing "
+            "data/vae_features_<stem>.parquet. Requires --metric vae."
+        ),
+    )
+    parser.add_argument(
+        "--vae-features-batch-size",
+        type=int,
+        default=128,
+        help="Batch size when --regenerate-vae-features runs write_vae_features.py.",
+    )
+    parser.add_argument(
+        "--pca-output-tag",
+        type=str,
+        default="32c",
+        help="Tag for data/pca_features_<tag>.parquet when --metric pca (must match write_pca_features.py).",
+    )
+    parser.add_argument(
+        "--regenerate-pca-features",
+        action="store_true",
+        help=(
+            "Before retrieval, run data_generation/write_pca_features.py over "
+            "data/processed_poses.parquet. Requires --metric pca; uses --pca-output-tag, "
+            "--pca-n-components, --pca-use-6d-rotations, --pca-features-batch-size."
+        ),
+    )
+    parser.add_argument(
+        "--pca-n-components",
+        type=int,
+        default=32,
+        help="PCA dimensions when --regenerate-pca-features runs write_pca_features.py.",
+    )
+    parser.add_argument(
+        "--pca-use-6d-rotations",
+        action="store_true",
+        help="Pass --use-6d-rotations to write_pca_features when --regenerate-pca-features.",
+    )
+    parser.add_argument(
+        "--pca-features-batch-size",
+        type=int,
+        default=256,
+        help="Batch size when --regenerate-pca-features runs write_pca_features.py.",
     )
     parser.add_argument(
         "--dedupe-epsilon",
@@ -250,12 +305,105 @@ def main():
     if args.dedupe_ncc_threshold < 0 or args.dedupe_ncc_threshold > 1:
         raise ValueError("dedupe-ncc-threshold must be in [0, 1]")
 
+    if args.regenerate_vae_features and args.regenerate_pca_features:
+        print(
+            "error: use only one of --regenerate-vae-features / --regenerate-pca-features",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    if args.regenerate_vae_features:
+        if args.metric != "vae":
+            print(
+                "error: --regenerate-vae-features requires --metric vae",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        if args.vae_features_batch_size <= 0:
+            raise ValueError("vae-features-batch-size must be > 0")
+        if not WRITE_VAE_FEATURES_SCRIPT.is_file():
+            raise FileNotFoundError(f"Missing script: {WRITE_VAE_FEATURES_SCRIPT}")
+        if not DEFAULT_POSES_PARQUET.is_file():
+            raise FileNotFoundError(
+                f"Poses parquet not found: {DEFAULT_POSES_PARQUET} "
+                "(same file topKRetrieval uses for the corpus)."
+            )
+        cmd = [
+            sys.executable,
+            str(WRITE_VAE_FEATURES_SCRIPT),
+            "--checkpoint-name",
+            args.vae_checkpoint,
+            "--poses-parquet",
+            str(DEFAULT_POSES_PARQUET),
+            "--batch-size",
+            str(args.vae_features_batch_size),
+        ]
+        print("Regenerating VAE features parquet:", " ".join(cmd), flush=True)
+        sub_env = os.environ.copy()
+        root_pp = str(REPO_ROOT)
+        sub_env["PYTHONPATH"] = (
+            root_pp
+            if not sub_env.get("PYTHONPATH")
+            else root_pp + os.pathsep + sub_env["PYTHONPATH"]
+        )
+        subprocess.check_call(cmd, cwd=str(REPO_ROOT), env=sub_env)
+
+    pca_metric_tag = args.pca_output_tag
+    if args.regenerate_pca_features:
+        if args.metric != "pca":
+            print(
+                "error: --regenerate-pca-features requires --metric pca",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        if args.pca_features_batch_size <= 0 or args.pca_n_components < 1:
+            raise ValueError("Invalid PCA regenerate batch size or n-components.")
+        if not WRITE_PCA_FEATURES_SCRIPT.is_file():
+            raise FileNotFoundError(f"Missing script: {WRITE_PCA_FEATURES_SCRIPT}")
+        if not DEFAULT_POSES_PARQUET.is_file():
+            raise FileNotFoundError(
+                f"Poses parquet not found: {DEFAULT_POSES_PARQUET} "
+                "(same file topKRetrieval uses for the corpus)."
+            )
+        pca_metric_tag = f"{args.pca_n_components}c"
+        if args.pca_output_tag != pca_metric_tag:
+            print(
+                f"Note: PCA files use tag {pca_metric_tag!r} (from --pca-n-components); "
+                f"ignoring --pca-output-tag={args.pca_output_tag!r}.",
+                flush=True,
+            )
+        pca_cmd = [
+            sys.executable,
+            str(WRITE_PCA_FEATURES_SCRIPT),
+            "--poses-parquet",
+            str(DEFAULT_POSES_PARQUET),
+            "--n-components",
+            str(args.pca_n_components),
+            "--batch-size",
+            str(args.pca_features_batch_size),
+            "--output-tag",
+            pca_metric_tag,
+        ]
+        if args.pca_use_6d_rotations:
+            pca_cmd.append("--use-6d-rotations")
+        print("Regenerating PCA features:", " ".join(pca_cmd), flush=True)
+        sub_env = os.environ.copy()
+        root_pp = str(REPO_ROOT)
+        sub_env["PYTHONPATH"] = (
+            root_pp
+            if not sub_env.get("PYTHONPATH")
+            else root_pp + os.pathsep + sub_env["PYTHONPATH"]
+        )
+        subprocess.check_call(pca_cmd, cwd=str(REPO_ROOT), env=sub_env)
+
     if args.metric == "squared":
         selected_metric = squaredDistanceMetric
     elif args.metric == "classification":
         selected_metric = getClassificationFeatureMetric()
-    else:
+    elif args.metric == "vae":
         selected_metric = getVAEFeatureMetric(checkpoint_name=args.vae_checkpoint)
+    else:
+        selected_metric = getPCAFeatureMetric(output_tag=pca_metric_tag)
     overfetch_k = max(args.k, args.k * args.overfetch_factor)
 
     query_pose, overfetched_results = runTopKRetrieval(
@@ -284,8 +432,16 @@ def main():
     for rank, res_pose in enumerate(results, start=1):
         print(f'"{_data_relative_pose_image_path(res_pose.relative_image_path)}"')
 
+    metric_display = (
+        f"pca[{pca_metric_tag}]" if args.metric == "pca" else args.metric
+    )
     render_results_table(
-        args.image_path, results, query_pose, selected_metric, args.metric, args.output
+        args.image_path,
+        results,
+        query_pose,
+        selected_metric,
+        metric_display,
+        args.output,
     )
 
 

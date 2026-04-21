@@ -18,7 +18,7 @@ CHECKPOINTS_PATH = PROJECT_ROOT / "checkpoints"
 TRAIN_DIR = PROJECT_ROOT / "vae_features" / "train"
 SKELETON_JSON_PATH = TRAIN_DIR / "mhr_skeleton_format.json"
 JOINT_NAMES_JSON_PATH = TRAIN_DIR / "joint_names.json"
-POSES_PARQUET_PATH = DATA_PATH / "processed_poses2.parquet"
+DEFAULT_POSES_PARQUET_PATH = DATA_PATH / "processed_poses.parquet"
 
 
 def _load_model_from_checkpoint(checkpoint_path: Path, device: torch.device):
@@ -108,11 +108,26 @@ def main():
         required=True,
         help="Checkpoint filename under checkpoints/ (e.g. mhr_vae_best.pt).",
     )
+    parser.add_argument(
+        "--poses-parquet",
+        type=Path,
+        default=None,
+        help="Parquet of poses to encode (default: data/processed_poses.parquet). "
+        "Must match what topKRetrieval uses for the retrieval corpus.",
+    )
     parser.add_argument("--batch-size", type=int, default=128)
     args = parser.parse_args()
 
     if args.batch_size <= 0:
         raise ValueError("batch-size must be > 0")
+
+    poses_parquet = (
+        args.poses_parquet.resolve()
+        if args.poses_parquet is not None
+        else DEFAULT_POSES_PARQUET_PATH.resolve()
+    )
+    if not poses_parquet.is_file():
+        raise FileNotFoundError(f"Poses parquet not found: {poses_parquet}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     checkpoint_path = CHECKPOINTS_PATH / args.checkpoint_name
@@ -120,7 +135,7 @@ def main():
     model, config, skeleton_format = _load_model_from_checkpoint(checkpoint_path, device)
 
     dataset = MHRPoseDataset(
-        parquet_path=POSES_PARQUET_PATH,
+        parquet_path=poses_parquet,
         skeleton_format=skeleton_format,
         joint_names_path=JOINT_NAMES_JSON_PATH,
         data_root=DATA_PATH,
