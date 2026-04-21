@@ -60,13 +60,16 @@ function revokeUnprotectedBatch(prev: ImageAsset[], saved: ImageAsset[], canvas:
   });
 }
 
-function buildSearchUrl(): string {
+type Metric = "vae" | "squared";
+
+function buildSearchUrl(metric: Metric): string {
   const base = import.meta.env.VITE_API_SEARCH_URL?.trim();
   if (!base) return "";
   const q = new URLSearchParams({
     offset: "0",
     limit: String(API_RESULT_LIMIT),
     include_images: "true",
+    metric,
   });
   return base.includes("?") ? `${base}&${q}` : `${base}?${q}`;
 }
@@ -103,6 +106,7 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [queryPreviewUrl, setQueryPreviewUrl] = useState<string | null>(null);
   const [drawingDirty, setDrawingDirty] = useState(false);
+  const [metric, setMetric] = useState<Metric>("vae");
 
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -130,7 +134,7 @@ export default function App() {
     return batch.slice(start, start + PAGE_SIZE);
   }, [batch, safePage]);
 
-  const apiSearchUrl = useMemo(() => buildSearchUrl(), []);
+  const apiSearchUrl = useMemo(() => buildSearchUrl(metric), [metric]);
 
   useEffect(() => {
     setPage((p) => Math.min(p, Math.max(0, pageCount - 1)));
@@ -499,6 +503,17 @@ export default function App() {
               >
                 {searching ? "Searching…" : "Search"}
               </button>
+              <label className="metric-select" title="Similarity metric used by the API">
+                <span className="metric-select-label">Metric</span>
+                <select
+                  value={metric}
+                  onChange={(e) => setMetric(e.target.value as Metric)}
+                  disabled={searching}
+                >
+                  <option value="vae">VAE</option>
+                  <option value="squared">Squared</option>
+                </select>
+              </label>
               {queryFile && (
                 <span className="meta">
                   {queryFile.name} ·{" "}
