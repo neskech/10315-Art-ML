@@ -195,6 +195,47 @@
   margin-bottom: 1.25rem;
 }
 
+.search-btn {
+  padding: 0.55rem 1rem;
+  border-radius: 10px;
+  border: 1px solid rgba(108, 140, 255, 0.45);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.search-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.search-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.error-banner {
+  margin-bottom: 1rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 107, 122, 0.45);
+  background: rgba(255, 107, 122, 0.1);
+  color: #ffb4bc;
+  font-size: 0.88rem;
+}
+
+.api-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  max-width: 42rem;
+  line-height: 1.4;
+}
+
+.api-hint code {
+  font-size: 0.9em;
+  color: var(--accent);
+}
+
 .file-btn {
   display: inline-flex;
   align-items: center;
@@ -209,6 +250,58 @@
 
 .file-btn:hover {
   border-color: rgba(108, 140, 255, 0.45);
+}
+
+.metric-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem 0.35rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+
+.metric-select:hover {
+  border-color: rgba(108, 140, 255, 0.45);
+}
+
+.metric-select-label {
+  color: var(--muted, #9aa0b4);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.metric-select select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  padding: 0.2rem 1.4rem 0.2rem 0.25rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 12px) 50%, calc(100% - 7px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.metric-select select:focus-visible {
+  outline: 2px solid var(--accent, #6c8cff);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.metric-select select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .visually-hidden {
@@ -246,6 +339,11 @@
 .pagination button:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+.pagination-above-grid {
+  margin: 0 0 0.75rem;
+  justify-content: flex-end;
 }
 
 .grid {
@@ -317,6 +415,105 @@
   padding: 2.5rem 1.5rem;
   text-align: center;
   color: var(--muted);
+}
+
+.query-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0 0 1.25rem;
+  align-items: flex-start;
+}
+
+.query-preview {
+  margin: 0;
+  flex: 0 1 360px;
+  max-width: 360px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.query-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 320px;
+  object-fit: contain;
+  background: #0a0c10;
+}
+
+.query-preview-caption {
+  padding: 0.45rem 0.65rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.draw-pad {
+  margin: 0;
+  flex: 0 1 360px;
+  max-width: 360px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+.draw-canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #ffffff;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.draw-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+
+.draw-actions {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.draw-btn {
+  padding: 0.35rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.draw-btn:hover:not(:disabled) {
+  border-color: rgba(108, 140, 255, 0.45);
+}
+
+.draw-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.draw-caption .search-btn {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.78rem;
 }
 
 .mood-wrap {

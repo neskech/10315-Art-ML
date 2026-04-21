@@ -289,6 +289,30 @@ def main() -> None:
     parser.add_argument("--offset", type=int, default=0, help="Result offset (default 0).")
     parser.add_argument("--limit", type=int, default=10, help="Number of results (default 10).")
     parser.add_argument(
+        "--metric",
+        choices=["vae", "squared"],
+        default="vae",
+        help="Retrieval metric: vae (cosine on latents) or squared (3D keypoints).",
+    )
+    parser.add_argument(
+        "--dedupe-epsilon",
+        type=float,
+        default=0.05,
+        help="Multiscale RMS L2 dedup threshold (0 disables). Default 0.05.",
+    )
+    parser.add_argument(
+        "--dedupe-ncc-threshold",
+        type=float,
+        default=0.88,
+        help="Crop-aware NCC dedup threshold (0 disables). Default 0.88.",
+    )
+    parser.add_argument(
+        "--overfetch-factor",
+        type=int,
+        default=5,
+        help="(offset+limit)*factor candidates fetched before dedup. Default 5.",
+    )
+    parser.add_argument(
         "--include-images",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -314,10 +338,14 @@ def main() -> None:
         sys.exit(1)
 
     url = args.url.rstrip("/") + "/"
-    params: dict[str, str | int | bool] = {
+    params: dict[str, str | int | bool | float] = {
         "offset": args.offset,
         "limit": args.limit,
+        "metric": args.metric,
         "include_images": args.include_images,
+        "dedupe_epsilon": args.dedupe_epsilon,
+        "dedupe_ncc_threshold": args.dedupe_ncc_threshold,
+        "overfetch_factor": args.overfetch_factor,
     }
     if args.ignore_query_cache:
         params["ignore_query_cache"] = True

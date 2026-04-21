@@ -1,17 +1,23 @@
-"""Command-line wrapper for the VAE retrieval Modal app.
+"""Command-line wrapper for the retrieval Modal app.
 
 The server stores the entire pose database as *precomputed* VAE latents in a
-single parquet file (output of ``data_generation/write_vae_features.py``).
-SAM3D + VAE encoding only runs on the *query* image at request time.
+parquet file (output of ``data_generation/write_vae_features.py``). To also
+support squared-distance retrieval over 3D keypoints, optionally upload the
+``processed_poses.parquet`` (output of ``data_generation/write_poses.py``);
+the server runs the scripted MHR model over it once at container start to
+cache keypoints. SAM3D + VAE + MHR encoding only runs on the *query* image
+at request time.
 
 Usage examples
 --------------
 
-# 1) Upload the precomputed VAE-features parquet, the trained VAE checkpoint
+# 1) Upload the precomputed VAE-features parquet, the optional processed-poses
+#    parquet (for squared-distance retrieval), the trained VAE checkpoint
 #    (for encoding query images) and the poses image directory (for returning
-#    base64 payloads) to the Modal Volume backing the API.
+#    base64 payloads + image-space dedup) to the Modal Volume backing the API.
 python API/serve.py upload \
     --parquet-path data/vae_features_mhr_vae_latest.parquet \
+    --processed-poses-parquet data/processed_poses.parquet \
     --vae-checkpoint checkpoints/mhr_vae_latest.pt \
     --poses-dir data/poses
 
@@ -29,12 +35,12 @@ python API/serve.py deploy \
 python API/serve.py run \
     --parquet-path data/vae_features_mhr_vae_latest.parquet \
     --vae-checkpoint checkpoints/mhr_vae_latest.pt \
-    --image data/query/sit.jpg --limit 5
+    --image data/query/sit.jpg --limit 5 --metric vae
 
-The ``--parquet-path``, ``--vae-checkpoint`` and ``--poses-dir`` flags exist on
-every subcommand so the same invocation works for upload + serve + deploy. They
-are exported as environment variables that ``API/main.py`` reads at module
-load time.
+The ``--parquet-path``, ``--processed-poses-parquet``, ``--vae-checkpoint`` and
+``--poses-dir`` flags exist on every subcommand so the same invocation works
+for upload + serve + deploy. They are exported as environment variables that
+``API/main.py`` reads at module load time.
 """
 
 from __future__ import annotations
@@ -49,6 +55,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 MAIN_FILE = Path(__file__).resolve().parent / "main.py"
 
 DEFAULT_PARQUET = REPO_ROOT / "data" / "vae_features_mhr_vae_latest.parquet"
+DEFAULT_PROCESSED_POSES = REPO_ROOT / "data" / "processed_poses.parquet"
 DEFAULT_VAE_CKPT = REPO_ROOT / "checkpoints" / "mhr_vae_latest.pt"
 DEFAULT_POSES_DIR = REPO_ROOT / "data" / "poses"
 DEFAULT_VOLUME_NAME = "vae-retrieval-data"
@@ -82,6 +89,18 @@ def _shared_args(parser: argparse.ArgumentParser) -> None:
             "Path to the local VAE-features parquet "
             "(output of data_generation/write_vae_features.py; columns: "
             "'image_path', 'vae_features'). (Default: %(default)s)"
+        ),
+    )
+    parser.add_argument(
+        "--processed-poses-parquet",
+        type=Path,
+        default=DEFAULT_PROCESSED_POSES,
+        help=(
+            "Path to the local processed-poses parquet (output of "
+            "data_generation/write_poses.py; columns include 'image_path' and "
+            "'mhr_parameters'). Uploaded to /vol/processed_poses.parquet and "
+            "used for squared-distance retrieval. Optional -- VAE retrieval "
+            "still works without it. (Default: %(default)s)"
         ),
     )
     parser.add_argument(
@@ -136,7 +155,12 @@ def _shared_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _validate_paths(args: argparse.Namespace, *, require_poses: bool) -> None:
+def _validate_paths(
+    args: argparse.Namespace,
+    *,
+    require_poses: bool,
+    require_processed_poses: bool = False,
+) -> None:
     missing = []
     if not args.parquet_path.exists():
         missing.append(f"parquet: {args.parquet_path}")
@@ -144,6 +168,8 @@ def _validate_paths(args: argparse.Namespace, *, require_poses: bool) -> None:
         missing.append(f"vae checkpoint: {args.vae_checkpoint}")
     if require_poses and not args.poses_dir.exists():
         missing.append(f"poses dir: {args.poses_dir}")
+    if require_processed_poses and not args.processed_poses_parquet.exists():
+        missing.append(f"processed poses parquet: {args.processed_poses_parquet}")
     if missing:
         sys.exit("Could not find:\n  - " + "\n  - ".join(missing))
 
@@ -169,12 +195,23 @@ def cmd_upload(args: argparse.Namespace) -> None:
 
     import modal  # local import so other subcommands work without modal installed in PATH only
 
+    include_processed_poses = args.processed_poses_parquet.exists()
+    if not include_processed_poses:
+        print(
+            f"Note: {args.processed_poses_parquet} not found; skipping upload of "
+            "processed_poses.parquet (squared-distance metric will be unavailable)."
+        )
+
     print(f"Connecting to Modal Volume '{args.volume_name}'...")
     vol = modal.Volume.from_name(args.volume_name, create_if_missing=True)
 
     print("Uploading artifacts (this may take a while for the poses dir)...")
     with vol.batch_upload(force=True) as batch:
         batch.put_file(str(args.parquet_path), "/vae_features.parquet")
+        if include_processed_poses:
+            batch.put_file(
+                str(args.processed_poses_parquet), "/processed_poses.parquet"
+            )
         batch.put_file(str(args.vae_checkpoint), "/vae.pt")
         batch.put_directory(str(args.poses_dir), "/poses")
 
@@ -184,16 +221,45 @@ def cmd_upload(args: argparse.Namespace) -> None:
 
 
 def cmd_upload_artifacts_only(args: argparse.Namespace) -> None:
-    """Upload only the parquet + VAE checkpoint (skip the large poses dir)."""
+    """Upload only the parquet(s) + VAE checkpoint (skip the large poses dir)."""
     _validate_paths(args, require_poses=False)
 
     import modal
 
+    include_processed_poses = args.processed_poses_parquet.exists()
+    if not include_processed_poses:
+        print(
+            f"Note: {args.processed_poses_parquet} not found; skipping upload of "
+            "processed_poses.parquet (squared-distance metric will be unavailable)."
+        )
+
     vol = modal.Volume.from_name(args.volume_name, create_if_missing=True)
-    print(f"Uploading parquet + VAE checkpoint to '{args.volume_name}'...")
+    print(f"Uploading parquet(s) + VAE checkpoint to '{args.volume_name}'...")
     with vol.batch_upload(force=True) as batch:
         batch.put_file(str(args.parquet_path), "/vae_features.parquet")
+        if include_processed_poses:
+            batch.put_file(
+                str(args.processed_poses_parquet), "/processed_poses.parquet"
+            )
         batch.put_file(str(args.vae_checkpoint), "/vae.pt")
+    print("Done.")
+
+
+def cmd_upload_processed_poses(args: argparse.Namespace) -> None:
+    """Upload only the processed-poses parquet (for squared-distance retrieval)."""
+    _validate_paths(args, require_poses=False, require_processed_poses=True)
+
+    import modal
+
+    vol = modal.Volume.from_name(args.volume_name, create_if_missing=True)
+    print(
+        f"Uploading processed_poses parquet to '{args.volume_name}' "
+        f"from {args.processed_poses_parquet} ..."
+    )
+    with vol.batch_upload(force=True) as batch:
+        batch.put_file(
+            str(args.processed_poses_parquet), "/processed_poses.parquet"
+        )
     print("Done.")
 
 
@@ -223,6 +289,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         str(args.offset),
         "--limit",
         str(args.limit),
+        "--metric",
+        str(args.metric),
+        "--dedupe-epsilon",
+        str(args.dedupe_epsilon),
+        "--dedupe-ncc-threshold",
+        str(args.dedupe_ncc_threshold),
+        "--overfetch-factor",
+        str(args.overfetch_factor),
     ]
     if args.include_images:
         extra.append("--include-images")
@@ -251,10 +325,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_upload_only = sub.add_parser(
         "upload-artifacts",
-        help="Upload only parquet + VAE checkpoint (skip the large poses dir).",
+        help="Upload only parquet(s) + VAE checkpoint (skip the large poses dir).",
     )
     _shared_args(p_upload_only)
     p_upload_only.set_defaults(func=cmd_upload_artifacts_only)
+
+    p_upload_poses = sub.add_parser(
+        "upload-processed-poses",
+        help="Upload only the processed-poses parquet (enables squared-distance metric).",
+    )
+    _shared_args(p_upload_poses)
+    p_upload_poses.set_defaults(func=cmd_upload_processed_poses)
 
     p_serve = sub.add_parser(
         "serve",
@@ -283,6 +364,43 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_run.add_argument("--offset", type=int, default=0)
     p_run.add_argument("--limit", type=int, default=5)
+    p_run.add_argument(
+        "--metric",
+        choices=["vae", "squared"],
+        default="vae",
+        help=(
+            "Retrieval metric: 'vae' for cosine similarity over VAE latents, "
+            "'squared' for squared L2 over MHR 3D keypoints (requires "
+            "processed_poses.parquet uploaded to the volume). (Default: %(default)s)"
+        ),
+    )
+    p_run.add_argument(
+        "--dedupe-epsilon",
+        type=float,
+        default=0.05,
+        help=(
+            "Multiscale RMS L2 threshold for image-space dedup. 0 disables. "
+            "(Default: %(default)s)"
+        ),
+    )
+    p_run.add_argument(
+        "--dedupe-ncc-threshold",
+        type=float,
+        default=0.88,
+        help=(
+            "Crop-aware NCC threshold; if >= this, treat the pair as dup. "
+            "0 disables. (Default: %(default)s)"
+        ),
+    )
+    p_run.add_argument(
+        "--overfetch-factor",
+        type=int,
+        default=5,
+        help=(
+            "When dedup is on, fetch (offset+limit)*factor candidates before "
+            "filtering. (Default: %(default)s)"
+        ),
+    )
     p_run.add_argument(
         "--include-images",
         action="store_true",

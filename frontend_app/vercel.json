@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/poseboard-api/:path*",
+      "destination": "https://cmellor--vae-topk-retrieval-vaeretrieval-search-dev.modal.run/:path*"
+    }
+  ]
+}
